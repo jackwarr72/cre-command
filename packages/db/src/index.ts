@@ -1,9 +1,17 @@
 /**
  * @cre/db
  *
- * PostgreSQL schema, migrations, and data access (Drizzle ORM).
+ * PostgreSQL persistence layer for cre-command.
  *
- * This module currently has no exports; add them here as the
- * database layer is implemented.
+ * Public surface:
+ * - Drizzle schema (tables, enums, relations, indexes) and row types
+ * - a typed database client factory
+ * - `db:migrate` / `db:generate` scripts (see package.json)
+ *
+ * The schema is derived from `@cre/shared` domain contracts; persistence
+ * concerns (FKs, indexes, versioning, raw payloads) stay here.
  */
-export {};
+
+export * from './postgres/schema';
+export { createDatabase, createPool, databaseUrl } from './postgres/client';
+export type { Database } from './postgres/client';
