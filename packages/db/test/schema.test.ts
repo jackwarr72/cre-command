@@ -74,13 +74,27 @@ describe('migration SQL', () => {
       PROPERTY_TYPES,
       LISTING_TYPES,
       LISTING_STATUSES,
-      PRICE_UNITS,
       SIZE_UNITS,
       CRAWL_RUN_STATUSES,
       ROBOTS_POLICIES,
     ]) {
       expect(migrationSql).toContain(`AS ENUM(${value.map((v) => `'${v}'`).join(', ')}`);
     }
+  });
+
+  it('creates price_unit in 0000 and extends it with sqm units in 0001', () => {
+    // Original set created in the initial migration.
+    expect(migrationSql).toContain(
+      `AS ENUM('total', 'sqft', 'sqft-month', 'sqft-year', 'month')`,
+    );
+    // Every current member must appear somewhere in the migration set.
+    for (const v of PRICE_UNITS) {
+      expect(migrationSql).toContain(`'${v}'`);
+    }
+    expect(migrationSql).toContain('ALTER TYPE "public"."price_unit" ADD VALUE');
+    expect(migrationSql).toContain("ADD VALUE 'sqm-month'");
+    expect(migrationSql).toContain("ADD VALUE 'sqm-year'");
+    expect(migrationSql).toContain("ADD VALUE 'sqm'");
   });
 
   it('creates all tables', () => {

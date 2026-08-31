@@ -20,6 +20,8 @@
  * - Money is an amount plus an ISO 4217 currency code.
  */
 
+import { z } from 'zod';
+
 // ── Primitives ───────────────────────────────────────────────────
 
 /** Opaque entity identifier (UUID recommended). */
@@ -108,6 +110,9 @@ export type ListingStatus = (typeof LISTING_STATUSES)[number];
  * - `sqft`       — per-square-foot asking price (sale)
  * - `sqft-month` — per-square-foot per month (lease)
  * - `sqft-year`  — per-square-foot per year (lease)
+ * - `sqm`        — per-square-metre asking price (sale)
+ * - `sqm-month`  — per-square-metre per month (lease)
+ * - `sqm-year`   — per-square-metre per year (lease)
  * - `month`      — flat monthly rent (lease)
  */
 export const PRICE_UNITS = [
@@ -115,6 +120,9 @@ export const PRICE_UNITS = [
   "sqft",
   "sqft-month",
   "sqft-year",
+  "sqm",
+  "sqm-month",
+  "sqm-year",
   "month",
 ] as const;
 export type PriceUnit = (typeof PRICE_UNITS)[number];
@@ -171,12 +179,73 @@ export interface Listing {
 }
 
 /**
- * A listing as captured by an adapter, before normalization,
- * deduplication, and persistence.
+ * A listing as captured and normalized by a source adapter, before any
+ * database persistence. Represents the *source of truth as observed* —
+ * it deliberately contains no database-specific fields (id, version,
+ * created_at, …). Provenance is carried by sourceKey/externalId/sourceUrl.
  */
-export type ListingCandidate = Omit<Listing, "id" | "status"> & {
-  status?: ListingStatus;
-};
+export const isoDateTimeSchema = z.string().datetime({ offset: true });
+
+export const listingContactSchema = z.object({
+  kind: z.enum(CONTACT_KINDS),
+  name: z.string().optional(),
+  company: z.string().optional(),
+  phone: z.string().optional(),
+  email: z.string().email().optional(),
+});
+
+export const listingCandidateSchema = z.object({
+  /** Adapter/source key, e.g. `vivanuncios`. */
+  sourceKey: z.string().min(1),
+  /** Listing ID within its source. */
+  externalId: z.string().min(1),
+  /** Canonical URL of the listing on the source site. */
+  sourceUrl: z.string().url(),
+  title: z.string().min(1),
+  description: z.string().optional(),
+  propertyType: z.enum(PROPERTY_TYPES),
+  listingType: z.enum(LISTING_TYPES),
+  address: z
+    .object({
+      streetAddress: z.string().optional(),
+      city: z.string().optional(),
+      state: z.string().optional(),
+      postalCode: z.string().optional(),
+      country: z.string().length(2),
+      formatted: z.string().optional(),
+    })
+    .optional(),
+  geo: z.object({ lat: z.number(), lng: z.number() }).optional(),
+  price: z
+    .object({
+      amount: z.number().nonnegative(),
+      currency: z.string().length(3),
+    })
+    .optional(),
+  priceUnit: z.enum(PRICE_UNITS).optional(),
+  size: z
+    .object({
+      value: z.number().nonnegative(),
+      unit: z.enum(SIZE_UNITS),
+    })
+    .optional(),
+  lotSize: z
+    .object({
+      value: z.number().nonnegative(),
+      unit: z.enum(SIZE_UNITS),
+    })
+    .optional(),
+  yearBuilt: z.number().int().optional(),
+  unitCount: z.number().int().nonnegative().optional(),
+  images: z.array(z.string().url()).default([]),
+  contacts: z.array(listingContactSchema).default([]),
+  /** Publication date on the source, when available. */
+  listedAt: isoDateTimeSchema.optional(),
+  /** Source-specific metadata preserved verbatim. */
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
+
+export type ListingCandidate = z.infer<typeof listingCandidateSchema>;
 // ── Contacts & leads ─────────────────────────────────────────────
 
 export const LEAD_STATUSES = [
