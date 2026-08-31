@@ -1,0 +1,31 @@
+{
+  "name": "cre-command",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Commercial Real Estate intelligence, crawling & lead-generation control panel (Kinetic Noir)",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n WEB,API -c yellow,cyan \"npm run dev:web\" \"npm run dev:api\"",
+    "dev:web": "npm run dev -w apps/web",
+    "dev:api": "npm run dev -w packages/api",
+    "dev:workers": "npm run dev -w packages/workers",
+    "start:api": "npm run start -w packages/api",
+    "start:web": "npm run start -w apps/web",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/db --noEmit && tsc -p packages/adapters --noEmit && tsc -p packages/crawler --noEmit && tsc -p packages/api --noEmit && tsc -p packages/workers --noEmit && tsc -p apps/web --noEmit",
+    "build:web": "npm run build -w apps/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
