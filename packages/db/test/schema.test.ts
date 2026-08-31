@@ -9,7 +9,9 @@ import {
   crawlRuns,
   listingObservations,
   listings,
+  sessions,
   sources,
+  users,
 } from '../src/postgres/schema';
 import {
   CRAWL_RUN_STATUSES,
@@ -19,6 +21,7 @@ import {
   PROPERTY_TYPES,
   ROBOTS_POLICIES,
   SIZE_UNITS,
+  USER_ROLES,
 } from '@cre/shared';
 
 const migrationsDir = fileURLToPath(
@@ -30,8 +33,16 @@ const migrationSql = readdirSync(migrationsDir)
   .join('\n');
 
 describe('db schema', () => {
-  it('defines the five core tables', () => {
-    for (const table of [sources, listings, listingObservations, contacts, crawlRuns]) {
+  it('defines the core tables', () => {
+    for (const table of [
+      sources,
+      listings,
+      listingObservations,
+      contacts,
+      crawlRuns,
+      users,
+      sessions,
+    ]) {
       expect(table).toBeDefined();
     }
   });
@@ -81,6 +92,7 @@ describe('migration SQL', () => {
       SIZE_UNITS,
       initialCrawlRunStatuses,
       ROBOTS_POLICIES,
+      USER_ROLES,
     ]) {
       expect(migrationSql).toContain(`AS ENUM(${value.map((v) => `'${v}'`).join(', ')}`);
     }
@@ -107,7 +119,15 @@ describe('migration SQL', () => {
   });
 
   it('creates all tables', () => {
-    for (const table of ['sources', 'listings', 'listing_observations', 'contacts', 'crawl_runs']) {
+    for (const table of [
+      'sources',
+      'listings',
+      'listing_observations',
+      'contacts',
+      'crawl_runs',
+      'users',
+      'sessions',
+    ]) {
       expect(migrationSql).toContain(`CREATE TABLE IF NOT EXISTS "${table}"`);
     }
   });
@@ -130,5 +150,15 @@ describe('migration SQL', () => {
       'CREATE UNIQUE INDEX IF NOT EXISTS "listings_source_external_uidx"',
     );
     expect(migrationSql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "sources_key_uidx"');
+    expect(migrationSql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "users_email_uidx"');
+    expect(migrationSql).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "sessions_token_hash_uidx"');
+  });
+
+  it('creates the auth tables with cascading session cleanup (0003)', () => {
+    expect(migrationSql).toContain('CREATE TABLE IF NOT EXISTS "users"');
+    expect(migrationSql).toContain('CREATE TABLE IF NOT EXISTS "sessions"');
+    expect(migrationSql).toContain('"user_role"');
+    expect(migrationSql).toContain('sessions_user_id_users_id_fk');
+    expect(migrationSql).toContain('ON DELETE cascade');
   });
 });

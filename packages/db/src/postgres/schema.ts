@@ -8,6 +8,8 @@
  *   listing_observations — raw observations of a listing (audit trail)
  *   contacts             — organizations/contacts surfaced while crawling (minimal)
  *   crawl_runs           — execution record of a crawl against a source
+ *   users                — operator accounts for the control panel (auth)
+ *   sessions             — opaque bearer sessions (hashed tokens)
  *
  * Design principles:
  * - Stabilize the shared vocabulary via `@cre/shared` constants (enum values),
@@ -42,6 +44,7 @@ import {
   PROPERTY_TYPES,
   ROBOTS_POLICIES,
   SIZE_UNITS,
+  USER_ROLES,
 } from '@cre/shared';
 
 // ── Enums (values derived from @cre/shared) ──────────────────────
@@ -53,6 +56,7 @@ export const priceUnit = pgEnum('price_unit', PRICE_UNITS);
 export const sizeUnit = pgEnum('size_unit', SIZE_UNITS);
 export const crawlRunStatus = pgEnum('crawl_run_status', CRAWL_RUN_STATUSES);
 export const robotsPolicy = pgEnum('robots_policy', ROBOTS_POLICIES);
+export const userRole = pgEnum('user_role', USER_ROLES);
 
 // ── Sources ───────────────────────────────────────────────────────
 
@@ -219,6 +223,46 @@ export const crawlRuns = pgTable(
   ],
 );
 
+// ── Users & sessions (operator auth) ─────────────────────────────
+
+export const users = pgTable(
+  'users',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Login identifier, stored lowercase. */
+    email: text('email').notNull(),
+    displayName: text('display_name'),
+    role: userRole('role').notNull().default('viewer'),
+    /** bcrypt hash — credentials never leave this table. */
+    passwordHash: text('password_hash').notNull(),
+    active: boolean('active').notNull().default(true),
+    createdAt: timestamp('created_at', { mode: 'date' }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { mode: 'date' })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => sql`now()`),
+  },
+  (t) => [uniqueIndex('users_email_uidx').on(t.email)],
+);
+
+export const sessions = pgTable(
+  'sessions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    /** SHA-256 of the opaque bearer token — the raw token is never stored. */
+    tokenHash: text('token_hash').notNull(),
+    expiresAt: timestamp('expires_at', { mode: 'date' }).notNull(),
+    createdAt: timestamp('created_at', { mode: 'date' }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('sessions_token_hash_uidx').on(t.tokenHash),
+    index('sessions_user_idx').on(t.userId),
+  ],
+);
+
 // ── Relations ─────────────────────────────────────────────────────
 
 export const sourcesRelations = relations(sources, ({ many }) => ({
@@ -241,6 +285,14 @@ export const crawlRunsRelations = relations(crawlRuns, ({ one }) => ({
   source: one(sources, { fields: [crawlRuns.sourceId], references: [sources.id] }),
 }));
 
+export const usersRelations = relations(users, ({ many }) => ({
+  sessions: many(sessions),
+}));
+
+export const sessionsRelations = relations(sessions, ({ one }) => ({
+  user: one(users, { fields: [sessions.userId], references: [users.id] }),
+}));
+
 // ── Row types ─────────────────────────────────────────────────────
 
 export type SourceRow = typeof sources.$inferSelect;
@@ -253,3 +305,7 @@ export type ContactRow = typeof contacts.$inferSelect;
 export type NewContactRow = typeof contacts.$inferInsert;
 export type CrawlRunRow = typeof crawlRuns.$inferSelect;
 export type NewCrawlRunRow = typeof crawlRuns.$inferInsert;
+export type UserRow = typeof users.$inferSelect;
+export type NewUserRow = typeof users.$inferInsert;
+export type SessionRow = typeof sessions.$inferSelect;
+export type NewSessionRow = typeof sessions.$inferInsert;
