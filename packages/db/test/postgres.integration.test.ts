@@ -31,6 +31,9 @@ describe.skipIf(!url)('postgres integration', () => {
   const testDbName = `cre_test_${process.pid}_${Date.now()}`;
 
   beforeAll(async () => {
+    // Narrow `url` for TypeScript; unreachable at runtime because the suite is
+    // skipped via describe.skipIf(!url) when DATABASE_URL is missing.
+    if (!url) throw new Error('DATABASE_URL must be set to run the postgres integration suite');
     // Fresh, disposable database per run → every run starts empty and is
     // idempotent. (The docker `cre` user is superuser.)
     const admin = new Pool({ connectionString: url });
