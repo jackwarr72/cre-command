@@ -1,0 +1,1 @@
+ALTER TYPE "public"."crawl_run_status" ADD VALUE 'completed_with_errors' BEFORE 'failed';

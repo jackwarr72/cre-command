@@ -70,16 +70,25 @@ describe('db schema', () => {
 
 describe('migration SQL', () => {
   it('was generated for every enum', () => {
+    // 'completed_with_errors' is added by migration 0002 (see the dedicated test below).
+    const initialCrawlRunStatuses = CRAWL_RUN_STATUSES.filter(
+      (status) => status !== 'completed_with_errors',
+    );
     for (const value of [
       PROPERTY_TYPES,
       LISTING_TYPES,
       LISTING_STATUSES,
       SIZE_UNITS,
-      CRAWL_RUN_STATUSES,
+      initialCrawlRunStatuses,
       ROBOTS_POLICIES,
     ]) {
       expect(migrationSql).toContain(`AS ENUM(${value.map((v) => `'${v}'`).join(', ')}`);
     }
+  });
+
+  it('extends crawl_run_status with completed_with_errors (0002)', () => {
+    expect(migrationSql).toContain('ALTER TYPE "public"."crawl_run_status" ADD VALUE');
+    expect(migrationSql).toContain("ADD VALUE 'completed_with_errors'");
   });
 
   it('creates price_unit in 0000 and extends it with sqm units in 0001', () => {

@@ -317,6 +317,8 @@ export const CRAWL_RUN_STATUSES = [
   "queued",
   "running",
   "completed",
+  /** The crawl produced records but also reported errors (partial success). */
+  "completed_with_errors",
   "failed",
   "cancelled",
 ] as const;
