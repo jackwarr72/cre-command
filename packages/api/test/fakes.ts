@@ -175,6 +175,14 @@ export class FakeSessionRepo implements SessionRepo {
     if (index >= 0) this.rows.splice(index, 1);
     this.deletedHashes.push(tokenHash);
   }
+
+  async deleteExpired(now: Date): Promise<number> {
+    const before = this.rows.length;
+    for (let i = this.rows.length - 1; i >= 0; i--) {
+      if (this.rows[i].expiresAt.getTime() < now.getTime()) this.rows.splice(i, 1);
+    }
+    return before - this.rows.length;
+  }
 }
 
 export class FakeListingQueryRepo implements ListingQueryRepo {
@@ -309,6 +317,11 @@ export class FakeCrawlRunQueryRepo implements CrawlRunQueryRepo {
       total: entries.length,
     };
   }
+
+  async findById(id: string): Promise<CrawlRun | null> {
+    const entry = this.rows.find((e) => e.row.id === id);
+    return entry ? toCrawlRunDto(entry.row, entry.sourceKey) : null;
+  }
 }
 
 export class FakeCrawlTrigger implements CrawlTrigger {
@@ -360,6 +373,8 @@ export async function buildTestHarness(
     listings?: ListingRow[];
     crawlRuns?: Array<{ row: CrawlRunRow; sourceKey: string }>;
     sourceKeysById?: Record<string, string>;
+    /** Merged over the defaults in `deps` — security knobs, logger, clock. */
+    deps?: Partial<AppDeps>;
   } = {},
 ): Promise<TestHarness> {
   const users = new FakeUserRepo();
@@ -384,6 +399,7 @@ export async function buildTestHarness(
     crawl,
     sessionTtlHours: 24,
     now: fixedNow,
+    ...options.deps,
   };
   const app = await buildApp(deps);
   return { deps, users, sessions, listings, sources, crawlRuns, crawl, app };

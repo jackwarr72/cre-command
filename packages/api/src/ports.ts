@@ -59,6 +59,8 @@ export interface SessionRepo {
   /** Resolves the session's user when the hash matches an unexpired session. */
   findActive(tokenHash: string, now: Date): Promise<{ user: UserRow; expiresAt: Date } | null>;
   deleteByTokenHash(tokenHash: string): Promise<void>;
+  /** Deletes sessions whose `expiresAt` has passed; returns rows removed. */
+  deleteExpired(now: Date): Promise<number>;
 }
 
 export interface ListingQueryRepo {
@@ -78,12 +80,33 @@ export interface CrawlRunQueryRepo {
     page: number,
     pageSize: number,
   ): Promise<Paged<CrawlRun>>;
+  findById(id: string): Promise<CrawlRun | null>;
 }
 
 /** Triggers a crawl against a configured source (production: @cre/crawler). */
 export interface CrawlTrigger {
   hasAdapter(sourceKey: string): boolean;
   trigger(source: SourceRow, urls: readonly string[]): Promise<CrawlOutcome>;
+}
+
+/**
+ * Server hardening options. Defaults are the secure ones (see
+ * `DEFAULT_SECURITY` in app.ts); production configuration only ever widens
+ * them deliberately (e.g. a CORS allowlist, higher rate caps).
+ */
+export interface SecurityOptions {
+  /** Exact browser origins allowed cross-origin. Empty = same-origin only. */
+  corsOrigins: string[];
+  /** Global sliding-window cap: max requests per window per client IP. */
+  rateLimitMax: number;
+  /** Global sliding-window duration in milliseconds. */
+  rateLimitWindowMs: number;
+  /** Stricter per-IP cap for credential endpoints (login). */
+  loginRateLimitMax: number;
+  /** Maximum accepted JSON request body size in bytes. */
+  bodyLimitBytes: number;
+  /** Trust X-Forwarded-For from the reverse proxy when resolving client IPs. */
+  trustProxy: boolean;
 }
 
 /** Everything the route handlers need; fakes or drizzle-backed implementations. */
@@ -96,8 +119,18 @@ export interface AppDeps {
   crawl: CrawlTrigger;
   /** Bearer session lifetime in hours. Default 168 (7 days). */
   sessionTtlHours?: number;
+  /** Server hardening options; omitted fields fall back to secure defaults. */
+  security?: Partial<SecurityOptions>;
+  /** Pino log level when logging is enabled. Default 'info'. */
+  logLevel?: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace';
   /** Injectable clock (tests). Default wall clock. */
   now?: () => Date;
   /** Pino logging config. Default off (tests); on in production. */
   logger?: boolean;
+  /**
+   * Injectable log destination (tests): a pino-compatible stream capturing
+   * the serialized log lines so redaction can be asserted without writing
+   * to stdout.
+   */
+  loggerStream?: { write(msg: string): void };
 }

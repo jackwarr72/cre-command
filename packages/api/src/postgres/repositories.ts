@@ -6,7 +6,7 @@
  * only touches crawl-policy columns.
  */
 
-import { and, asc, count, desc, eq, gte, ilike, inArray, lte, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, ilike, inArray, lt, lte, or, type SQL } from 'drizzle-orm';
 
 import { crawlRuns, listings, sessions, sources, users } from '@cre/db';
 import type { Database, SourceRow, UserRow } from '@cre/db';
@@ -87,6 +87,17 @@ export class PgCrawlRunQueryRepo implements CrawlRunQueryRepo {
       total,
     };
   }
+
+  async findById(id: string): Promise<CrawlRun | null> {
+    const rows = await this.db
+      .select({ run: crawlRuns, sourceKey: sources.key })
+      .from(crawlRuns)
+      .innerJoin(sources, eq(sources.id, crawlRuns.sourceId))
+      .where(eq(crawlRuns.id, id))
+      .limit(1);
+    const row = rows[0];
+    return row ? toCrawlRunDto(row.run, row.sourceKey) : null;
+  }
 }
 
 // ── Users & sessions (auth) ──────────────────────────────────────
@@ -159,6 +170,14 @@ export class PgSessionRepo implements SessionRepo {
 
   async deleteByTokenHash(tokenHash: string): Promise<void> {
     await this.db.delete(sessions).where(eq(sessions.tokenHash, tokenHash));
+  }
+
+  async deleteExpired(now: Date): Promise<number> {
+    const removed = await this.db
+      .delete(sessions)
+      .where(lt(sessions.expiresAt, now))
+      .returning({ id: sessions.id });
+    return removed.length;
   }
 }
 

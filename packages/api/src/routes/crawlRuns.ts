@@ -39,6 +39,16 @@ export function registerCrawlRunRoutes(app: FastifyInstance, deps: AppDeps): voi
     return deps.crawlRuns.list({ sourceKey, statuses }, page, pageSize);
   });
 
+  /** Run detail — includes errors so operators can inspect and recover failures. */
+  app.get('/crawl-runs/:id', { preHandler: guards.requireAuth }, async (request) => {
+    const { id } = request.params as { id: string };
+    const run = await deps.crawlRuns.findById(id);
+    if (!run) {
+      throw ApiError.notFound('NOT_FOUND', `no crawl run with id '${id}'`);
+    }
+    return run;
+  });
+
   /**
    * Operator action: run a crawl now. The crawler itself re-validates the
    * source policy and robots.txt at run time (fail closed) — this endpoint

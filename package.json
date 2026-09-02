@@ -27,5 +27,8 @@
   },
   "engines": {
     "node": ">=20"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "^11.2.0"
   }
 }

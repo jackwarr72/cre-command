@@ -46,10 +46,14 @@ export function registerErrorHandler(app: FastifyInstance): void {
           .status(400)
           .send(errorBody(`invalid request: ${details}`, 'VALIDATION_ERROR'));
       }
-      const status =
+            const status =
         'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;
       if (status < 500) {
-        return reply.status(status).send(errorBody(error.message, 'BAD_REQUEST'));
+        // Preserve the error's machine-readable code when present (e.g.
+        // 'RATE_LIMITED' from @fastify/rate-limit). Fall back to BAD_REQUEST
+        // for generic Fastify errors that only expose a status code.
+        const code = typeof error.code === 'string' ? error.code : 'BAD_REQUEST';
+        return reply.status(status).send(errorBody(error.message, code));
       }
       request.log.error(error, 'unhandled request error');
       return reply.status(500).send(errorBody('Internal server error', 'INTERNAL'));

@@ -19,27 +19,43 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
   const ttlMs = (deps.sessionTtlHours ?? 168) * 3_600_000;
   const now = deps.now ?? ((): Date => new Date());
 
-  app.post('/auth/login', async (request, reply) => {
-    const { email, password } = loginSchema.parse(request.body);
-    const user = await deps.users.findByEmail(email.trim().toLowerCase());
-    if (!user || !user.active || !(await verifyPassword(password, user.passwordHash))) {
-      // One message for unknown email / wrong password / disabled account —
-      // never reveal which one failed.
-      throw new ApiError(401, 'INVALID_CREDENTIALS', 'invalid email or password');
-    }
+  // Credential endpoints get a stricter per-IP cap than the global limit:
+  // brute-forcing passwords must hit a wall long before ordinary API traffic.
+  const loginRateLimitMax = deps.security?.loginRateLimitMax ?? 10;
+  const rateLimitWindowMs = deps.security?.rateLimitWindowMs ?? 60_000;
 
-    const at = now();
-    const { token, tokenHash } = newSessionToken();
-    const expiresAt = new Date(at.getTime() + ttlMs);
-    await deps.sessions.create({ userId: user.id, tokenHash, expiresAt }, at);
+  app.post(
+    '/auth/login',
+    {
+      config: {
+        rateLimit: {
+          max: loginRateLimitMax,
+          timeWindow: rateLimitWindowMs,
+        },
+      },
+    },
+    async (request, reply) => {
+      const { email, password } = loginSchema.parse(request.body);
+      const user = await deps.users.findByEmail(email.trim().toLowerCase());
+      if (!user || !user.active || !(await verifyPassword(password, user.passwordHash))) {
+        // One message for unknown email / wrong password / disabled account —
+        // never reveal which one failed.
+        throw new ApiError(401, 'INVALID_CREDENTIALS', 'invalid email or password');
+      }
 
-    const response: LoginResponse = {
-      user: toUserDto(user),
-      token,
-      expiresAt: expiresAt.toISOString(),
-    };
-    return reply.status(200).send(response);
-  });
+      const at = now();
+      const { token, tokenHash } = newSessionToken();
+      const expiresAt = new Date(at.getTime() + ttlMs);
+      await deps.sessions.create({ userId: user.id, tokenHash, expiresAt }, at);
+
+      const response: LoginResponse = {
+        user: toUserDto(user),
+        token,
+        expiresAt: expiresAt.toISOString(),
+      };
+      return reply.status(200).send(response);
+    },
+  );
 
   app.get('/auth/me', { preHandler: guards.requireAuth }, async (request) => request.user);
 
