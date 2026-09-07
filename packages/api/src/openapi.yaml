@@ -1,0 +1,461 @@
+openapi: 3.1.0
+info:
+  title: cre-command API
+  version: 0.1.0
+  description: |
+    Commercial Real Estate intelligence, crawling & lead-generation control panel API.
+
+    ## Authentication
+
+    All authenticated endpoints require a `Bearer` token in the `Authorization` header:
+
+    ```
+    Authorization: Bearer <token>
+    ```
+
+    Tokens are obtained via `POST /api/auth/login`.
+
+    ## Split-Phase MFA Login
+
+    For users with MFA (TOTP) enabled, login is a two-step process:
+
+    ### Phase 1: Initiate Login
+
+    ```http
+    POST /api/auth/login
+    Content-Type: application/json
+
+    {
+      "email": "operator@example.com",
+      "password": "secret123"
+    }
+    ```
+
+    If MFA is enabled and no `mfaCode` is provided, the server returns:
+
+    ```json
+    {
+      "user": { "id": "...", "email": "operator@example.com", ... },
+      "token": "",
+      "expiresAt": "1970-01-01T00:00:00.000Z",
+      "mfaRequired": true,
+      "mfaChallengeId": "abc123...",
+      "mfaChallengeTtlSeconds": 300
+    }
+    ```
+
+    ### Phase 2: Submit MFA Code
+
+    Using the `mfaChallengeId` from Phase 1, submit the TOTP code:
+
+    ```http
+    POST /api/auth/login
+    Content-Type: application/json
+
+    {
+      "email": "operator@example.com",
+      "password": "secret123",
+      "mfaChallengeId": "abc123...",
+      "mfaCode": "123456"
+    }
+    ```
+
+    Or use a backup recovery code instead:
+
+    ```json
+    {
+      "email": "operator@example.com",
+      "password": "secret123",
+      "mfaChallengeId": "abc123...",
+      "mfaRecoveryCode": "A1B2C3D4E5"
+    }
+    ```
+
+    On success, the server returns the full session token.
+
+    ### Rate Limiting
+
+    - Login attempts (Phase 1): 10 requests per minute per IP
+    - MFA verification (Phase 2): 5 requests per minute per IP
+
+servers:
+  - url: /api
+    description: Local development server
+  - url: https://api.cre-command.example.com
+    description: Production
+
+paths:
+  /auth/login:
+    post:
+      operationId: login
+      summary: Authenticate and obtain a session token
+      description: |
+        Phase 1 (no MFA): Validates credentials and returns a session token.
+
+        Phase 2 (MFA enabled): When `mfaRequired: true` is returned, resubmit
+        the same credentials plus `mfaChallengeId` and either `mfaCode` (6-digit
+        TOTP) or `mfaRecoveryCode` (10-character backup code).
+      tags:
+        - auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+            example:
+              email: operator@cre.test
+              password: secret123
+      responses:
+        '200':
+          description: Successful authentication
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              examples:
+                direct:
+                  summary: Direct login (no MFA)
+                  value:
+                    user:
+                      id: usr-1
+                      email: operator@cre.test
+                      role: operator
+                      active: true
+                      createdAt: '2025-06-01T12:00:00.000Z'
+                      updatedAt: '2025-06-01T12:00:00.000Z'
+                    token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                    expiresAt: '2025-06-08T12:00:00.000Z'
+                mfa-challenge:
+                  summary: MFA challenge issued (MFA enabled, no code submitted)
+                  value:
+                    user:
+                      id: usr-1
+                      email: operator@cre.test
+                      role: operator
+                      active: true
+                      createdAt: '2025-06-01T12:00:00.000Z'
+                      updatedAt: '2025-06-01T12:00:00.000Z'
+                    token: ''
+                    expiresAt: '1970-01-01T00:00:00.000Z'
+                    mfaRequired: true
+                    mfaChallengeId: dGhpcyBpcyBhIGNodWFsbGVuZ2VfaWQ...
+                    mfaChallengeTtlSeconds: 300
+        '400':
+          description: Validation error or MFA challenge required
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                validation:
+                  summary: Invalid request body
+                  value:
+                    error:
+                      message: 'Invalid email format'
+                      code: VALIDATION_ERROR
+                mfa-challenge-required:
+                  summary: MFA code submitted without challenge ID
+                  value:
+                    error:
+                      message: 'mfaCode supplied without a corresponding mfaChallengeId'
+                      code: MFA_CHALLENGE_REQUIRED
+        '401':
+          description: Authentication failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              examples:
+                invalid-credentials:
+                  summary: Wrong email or password
+                  value:
+                    error:
+                      message: 'invalid email or password'
+                      code: INVALID_CREDENTIALS
+                invalid-mfa-code:
+                  summary: Wrong TOTP or recovery code
+                  value:
+                    error:
+                      message: 'invalid MFA code'
+                      code: INVALID_MFA_CODE
+                invalid-challenge:
+                  summary: Challenge expired or already consumed
+                  value:
+                    error:
+                      message: 'MFA challenge is invalid or expired'
+                      code: INVALID_MFA_CHALLENGE
+        '429':
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+              description: Seconds to wait before retrying
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /auth/login/mfa-verify:
+    post:
+      operationId: mfaVerify
+      summary: Submit MFA verification for an existing challenge
+      description: |
+        Dedicated endpoint for MFA verification with stricter rate limiting (5 attempts/minute).
+        Can use either a TOTP code or a backup recovery code. Recovery codes are
+        single-use and cannot be reused.
+      tags:
+        - auth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MfaVerifyRequest'
+            example:
+              email: operator@cre.test
+              password: secret123
+              mfaChallengeId: dGhpcyBpcyBhIGNodWFsbGVuZ2VfaWQ...
+              mfaCode: '123456'
+      responses:
+        '200':
+          description: MFA verification successful, session token issued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+        '400':
+          description: Validation error or MFA not enabled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '401':
+          description: Invalid credentials, challenge, or MFA code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+        '429':
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      summary: Get the authenticated user
+      tags:
+        - auth
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+  /auth/logout:
+    post:
+      operationId: logout
+      summary: Invalidate the current session
+      tags:
+        - auth
+      security:
+        - bearerAuth: []
+      responses:
+        '204':
+          description: Session invalidated
+        '401':
+          description: Unauthenticated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    LoginRequest:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          maxLength: 320
+          description: User's email address
+        password:
+          type: string
+          minLength: 1
+          maxLength: 1024
+          description: User's password
+        mfaCode:
+          type: string
+          pattern: '^\d{6}$'
+          description: |
+            6-digit TOTP code from an authenticator app. Required for Phase 2
+            MFA verification when `mfaChallengeId` is provided.
+        mfaRecoveryCode:
+          type: string
+          pattern: '^[A-Z0-9]{10}$'
+          description: |
+            One-time backup recovery code (10 alphanumeric characters, uppercase).
+            Each recovery code can only be used once.
+        mfaChallengeId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: |
+            Challenge ID from Phase 1 `LoginResponse.mfaChallengeId`.
+            Required when submitting `mfaCode` or `mfaRecoveryCode`.
+        deviceFingerprint:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Stable per-device token for trusted device memory.
+
+    MfaVerifyRequest:
+      type: object
+      required:
+        - email
+        - password
+        - mfaChallengeId
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+        mfaCode:
+          type: string
+          pattern: '^\d{6}$'
+        mfaRecoveryCode:
+          type: string
+          pattern: '^[A-Z0-9]{10}$'
+        mfaChallengeId:
+          type: string
+
+    LoginResponse:
+      type: object
+      required:
+        - user
+        - token
+        - expiresAt
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        token:
+          type: string
+          description: |
+            Bearer token for subsequent authenticated requests.
+            Empty string when `mfaRequired: true` (Phase 1 pending MFA).
+        expiresAt:
+          type: string
+          format: date-time
+          description: Token expiration timestamp (ISO 8601 UTC)
+        refreshToken:
+          type: string
+          description: Opaque refresh token for obtaining new access tokens without re-authentication.
+        mfaRequired:
+          type: boolean
+          description: |
+            `true` when MFA is enabled and Phase 1 completed successfully.
+            Client should resubmit with `mfaCode` or `mfaRecoveryCode`.
+        mfaChallengeId:
+          type: string
+          description: |
+            Opaque challenge ID for Phase 2. Echo this back when submitting
+            the MFA code. Single-use and expires in 5 minutes.
+        mfaChallengeTtlSeconds:
+          type: integer
+          description: Seconds until the MFA challenge expires.
+
+    User:
+      type: object
+      required:
+        - id
+        - email
+        - role
+        - active
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        displayName:
+          type: string
+          nullable: true
+        role:
+          $ref: '#/components/schemas/UserRole'
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    UserRole:
+      type: string
+      enum:
+        - admin
+        - operator
+        - viewer
+
+    ApiError:
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: object
+          required:
+            - message
+          properties:
+            message:
+              type: string
+              description: Human-readable error description
+            code:
+              type: string
+              description: |
+                Machine-readable error code. Possible values:
+
+                | Code | HTTP Status | Description |
+                |------|-------------|-------------|
+                | `INVALID_CREDENTIALS` | 401 | Wrong email or password |
+                | `UNAUTHENTICATED` | 401 | Missing or invalid bearer token |
+                | `FORBIDDEN` | 403 | Insufficient permissions |
+                | `NOT_FOUND` | 404 | Resource not found |
+                | `VALIDATION_ERROR` | 400 | Request body failed validation |
+                | `RATE_LIMITED` | 429 | Too many requests |
+                | `MFA_CHALLENGE_REQUIRED` | 400 | MFA code submitted without challenge ID |
+                | `INVALID_MFA_CHALLENGE` | 401 | Challenge expired or already consumed |
+                | `INVALID_MFA_CODE` | 401 | Wrong TOTP or recovery code |
+                | `MFA_NOT_ENABLED` | 400 | MFA verification requested but user has no MFA |
+                | `MFA_NOT_CONFIGURED` | 500 | User has MFA enabled but no secret on file |

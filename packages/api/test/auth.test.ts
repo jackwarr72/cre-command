@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ensureBootstrapAdmin } from '../src/auth/bootstrap';
+import { totp } from '../src/auth/totp';
 import { buildTestHarness, createUser, fixedNow, login } from './fakes';
 
 describe('auth bootstrap', () => {
@@ -176,5 +177,171 @@ describe('POST /api/auth/logout', () => {
 
     const after = await h.app.inject({ method: 'GET', url: '/api/auth/me', headers });
     expect(after.statusCode).toBe(401);
+  });
+});
+
+describe('POST /api/auth/login MFA flow', () => {
+  const TEST_SECRET = 'JBSWY3DPEHPK3PXP';
+
+  it('returns mfaRequired=true when user has MFA enabled but no code submitted', async () => {
+    const h = await buildTestHarness();
+    const user = await createUser(h.users, { email: 'mfa@cre.test', password: 'secret123' });
+    h.users.setMfa(user.id, { mfaEnabled: true, mfaSecret: TEST_SECRET });
+
+    const response = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'mfa@cre.test', password: 'secret123' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.mfaRequired).toBe(true);
+    expect(body.mfaChallengeId).toBeDefined();
+    expect(body.mfaChallengeTtlSeconds).toBe(300);
+    expect(body.token).toBe('');
+    expect(body.user).toBeDefined();
+    expect(h.sessions.rows).toHaveLength(0);
+  });
+
+  it('rejects mfaCode without mfaChallengeId with 400 MFA_CHALLENGE_REQUIRED', async () => {
+    const h = await buildTestHarness();
+    const user = await createUser(h.users, { email: 'mfa@cre.test', password: 'secret123' });
+    h.users.setMfa(user.id, { mfaEnabled: true, mfaSecret: TEST_SECRET });
+
+    const response = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'mfa@cre.test', password: 'secret123', mfaCode: '123456' },
+    });
+
+    expect(response.statusCode).toBe(400);
+    expect(response.json()).toEqual({
+      error: { message: 'mfaCode or mfaRecoveryCode supplied without a corresponding mfaChallengeId', code: 'MFA_CHALLENGE_REQUIRED' },
+    });
+  });
+
+  it('rejects an invalid mfaChallengeId with 401 INVALID_MFA_CHALLENGE', async () => {
+    const h = await buildTestHarness();
+    const user = await createUser(h.users, { email: 'mfa@cre.test', password: 'secret123' });
+    h.users.setMfa(user.id, { mfaEnabled: true, mfaSecret: TEST_SECRET });
+
+    const response = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'mfa@cre.test', password: 'secret123', mfaCode: '123456', mfaChallengeId: 'invalid-challenge' },
+    });
+
+    expect(response.statusCode).toBe(401);
+    expect(response.json()).toEqual({
+      error: { message: 'MFA challenge is invalid or expired', code: 'INVALID_MFA_CHALLENGE' },
+    });
+  });
+
+  it('rejects an invalid MFA code with 401 INVALID_MFA_CODE', async () => {
+    const h = await buildTestHarness();
+    const user = await createUser(h.users, { email: 'mfa@cre.test', password: 'secret123' });
+    h.users.setMfa(user.id, { mfaEnabled: true, mfaSecret: TEST_SECRET });
+
+    const challengeResponse = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'mfa@cre.test', password: 'secret123' },
+    });
+    expect(challengeResponse.statusCode).toBe(200);
+    const { mfaChallengeId } = challengeResponse.json();
+
+    const verifyResponse = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'mfa@cre.test', password: 'secret123', mfaCode: '000000', mfaChallengeId },
+    });
+
+    expect(verifyResponse.statusCode).toBe(401);
+    expect(verifyResponse.json()).toEqual({
+      error: { message: 'invalid MFA code or recovery code', code: 'INVALID_MFA_CODE' },
+    });
+    expect(h.sessions.rows).toHaveLength(0);
+  });
+
+  it('completes login with valid MFA code and returns token', async () => {
+    const h = await buildTestHarness();
+    const user = await createUser(h.users, { email: 'mfa@cre.test', password: 'secret123' });
+    h.users.setMfa(user.id, { mfaEnabled: true, mfaSecret: TEST_SECRET });
+
+    const challengeResponse = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'mfa@cre.test', password: 'secret123' },
+    });
+    expect(challengeResponse.statusCode).toBe(200);
+    const { mfaChallengeId } = challengeResponse.json();
+
+    const step = Math.floor(fixedNow().getTime() / 30_000);
+    const validCode = totp(TEST_SECRET, step);
+
+    const verifyResponse = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'mfa@cre.test', password: 'secret123', mfaCode: validCode, mfaChallengeId },
+    });
+
+    expect(verifyResponse.statusCode).toBe(200);
+    const body = verifyResponse.json();
+    expect(body.mfaRequired).toBeUndefined();
+    expect(body.mfaChallengeId).toBeUndefined();
+    expect(body.token).toBeDefined();
+    expect(body.token.length).toBeGreaterThan(16);
+    expect(body.user.email).toBe('mfa@cre.test');
+    expect(h.sessions.rows).toHaveLength(1);
+  });
+
+  it('rejects a challenge that was already consumed (single-use)', async () => {
+    const h = await buildTestHarness();
+    const user = await createUser(h.users, { email: 'mfa@cre.test', password: 'secret123' });
+    h.users.setMfa(user.id, { mfaEnabled: true, mfaSecret: TEST_SECRET });
+
+    const challengeResponse = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'mfa@cre.test', password: 'secret123' },
+    });
+    expect(challengeResponse.statusCode).toBe(200);
+    const { mfaChallengeId } = challengeResponse.json();
+
+    const step = Math.floor(fixedNow().getTime() / 30_000);
+    const validCode = totp(TEST_SECRET, step);
+
+    const verifyResponse = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'mfa@cre.test', password: 'secret123', mfaCode: validCode, mfaChallengeId },
+    });
+    expect(verifyResponse.statusCode).toBe(200);
+
+    const reuseResponse = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'mfa@cre.test', password: 'secret123', mfaCode: validCode, mfaChallengeId },
+    });
+    expect(reuseResponse.statusCode).toBe(401);
+    expect(reuseResponse.json().error.code).toBe('INVALID_MFA_CHALLENGE');
+  });
+
+  it('allows login without MFA when user has MFA disabled', async () => {
+    const h = await buildTestHarness();
+    await createUser(h.users, { email: 'nomfa@cre.test', password: 'secret123' });
+
+    const response = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/login',
+      payload: { email: 'nomfa@cre.test', password: 'secret123' },
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    expect(body.mfaRequired).toBeUndefined();
+    expect(body.token).toBeDefined();
+    expect(h.sessions.rows).toHaveLength(1);
   });
 });

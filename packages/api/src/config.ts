@@ -99,6 +99,16 @@ export interface ApiConfig {
   sessionTtlHours: number;
   /** How often expired sessions are pruned, in milliseconds. 0 disables. */
   sessionPruneIntervalMs: number;
+  /** Redis connection URL for distributed MFA challenge store. Omit for in-process store. */
+  redisUrl?: string;
+  /** 32-byte base64-encoded key for encrypting MFA TOTP secrets at rest. */
+  mfaEncryptionKey?: string;
+  /** MFA challenge TTL in milliseconds (default 5 minutes). */
+  mfaChallengeTtlMs: number;
+  /** Per-IP rate limit for MFA verification endpoint (TOTP submit). */
+  mfaVerifyRateLimitMax: number;
+  /** Rate limit window for MFA verification in milliseconds. */
+  mfaVerifyRateLimitWindowMs: number;
 }
 
 const DEFAULT_BODY_LIMIT_BYTES = 1_048_576; // 1 MiB — the API accepts small JSON only
@@ -106,6 +116,11 @@ const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000;
 const DEFAULT_RATE_LIMIT_MAX = 300;
 const DEFAULT_LOGIN_RATE_LIMIT_MAX = 10;
 const DEFAULT_SESSION_PRUNE_INTERVAL_MS = 3_600_000;
+const DEFAULT_MFA_CHALLENGE_TTL_MS = 5 * 60_000;
+const DEFAULT_MFA_VERIFY_RATE_LIMIT_MAX = 5;
+const DEFAULT_MFA_VERIFY_RATE_LIMIT_WINDOW_MS = 60_000;
+
+export { DEFAULT_MFA_CHALLENGE_TTL_MS };
 
 function parseLogLevel(raw: string | undefined): ApiConfig['logLevel'] {
   const value = (raw ?? 'info').trim().toLowerCase();
@@ -167,5 +182,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
           DEFAULT_SESSION_PRUNE_INTERVAL_MS,
           'SESSION_PRUNE_INTERVAL_MS',
         ),
+    redisUrl: env['REDIS_URL']?.trim() || undefined,
+    mfaEncryptionKey: env['MFA_ENCRYPTION_KEY']?.trim() || undefined,
+    mfaChallengeTtlMs: positiveInt(env['MFA_CHALLENGE_TTL_MS'], DEFAULT_MFA_CHALLENGE_TTL_MS, 'MFA_CHALLENGE_TTL_MS'),
+    mfaVerifyRateLimitMax: positiveInt(
+      env['MFA_VERIFY_RATE_LIMIT_MAX'],
+      DEFAULT_MFA_VERIFY_RATE_LIMIT_MAX,
+      'MFA_VERIFY_RATE_LIMIT_MAX',
+    ),
+    mfaVerifyRateLimitWindowMs: positiveInt(
+      env['MFA_VERIFY_RATE_LIMIT_WINDOW_MS'],
+      DEFAULT_MFA_VERIFY_RATE_LIMIT_WINDOW_MS,
+      'MFA_VERIFY_RATE_LIMIT_WINDOW_MS',
+    ),
   };
 }
+
+/** The raw MFA encryption key, loaded lazily at runtime. Throws if not set when needed. */
+export const MFA_ENCRYPTION_KEY = process.env['MFA_ENCRYPTION_KEY']?.trim() || undefined;

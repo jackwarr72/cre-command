@@ -19,6 +19,7 @@ import { createDatabase, createPool, type Database } from '@cre/db';
 
 import { buildApp } from './app';
 import { ensureBootstrapAdmin } from './auth/bootstrap';
+import { InMemoryMfaChallengeRepo } from './auth/mfa-challenges';
 import { loadConfig } from './config';
 import { createCrawlTrigger } from './postgres/crawler';
 import { createApiRepositories } from './postgres/repositories';
@@ -29,9 +30,11 @@ const config = loadConfig();
 const pool = createPool();
 const db: Database = createDatabase(pool);
 const repos = createApiRepositories(db);
+const mfaChallenges = new InMemoryMfaChallengeRepo();
 
 const app = await buildApp({
   ...repos,
+  mfaChallenges,
   crawl: createCrawlTrigger(db),
   sessionTtlHours: config.sessionTtlHours,
   security: {
@@ -81,6 +84,7 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   app.log.info({ signal }, 'shutting down');
   if (pruneTimer) clearInterval(pruneTimer);
+  mfaChallenges.stop();
   // Stop accepting new connections and await in-flight requests (bounded by
   // fastify's closeTimeout); then close the pool so the process can exit.
   try {

@@ -10,7 +10,7 @@ import { and, asc, count, desc, eq, gte, ilike, inArray, lt, lte, or, type SQL }
 
 import { crawlRuns, listings, sessions, sources, users } from '@cre/db';
 import type { Database, SourceRow, UserRow } from '@cre/db';
-import type { CrawlRun, CrawlRunStatus, Listing, ListingFilter, Paged } from '@cre/shared';
+import type { CrawlRunWithMetrics, CrawlRunStatus, Listing, ListingFilter, Paged } from '@cre/shared';
 
 import { toCrawlRunDto, toListingDto } from '../serializers';
 import type {
@@ -18,6 +18,7 @@ import type {
   ListingQueryRepo,
   SessionRepo,
   SourceAdminRepo,
+  SourceHealthRepo,
   SourcePolicyPatch,
   UserRepo,
 } from '../ports';
@@ -58,7 +59,7 @@ export class PgCrawlRunQueryRepo implements CrawlRunQueryRepo {
     filter: { sourceKey?: string; statuses?: CrawlRunStatus[] },
     page: number,
     pageSize: number,
-  ): Promise<Paged<CrawlRun>> {
+  ): Promise<Paged<CrawlRunWithMetrics>> {
     const conditions: SQL[] = [];
     if (filter.sourceKey) conditions.push(eq(sources.key, filter.sourceKey));
     if (filter.statuses?.length) conditions.push(inArray(crawlRuns.status, filter.statuses));
@@ -88,7 +89,7 @@ export class PgCrawlRunQueryRepo implements CrawlRunQueryRepo {
     };
   }
 
-  async findById(id: string): Promise<CrawlRun | null> {
+  async findById(id: string): Promise<CrawlRunWithMetrics | null> {
     const rows = await this.db
       .select({ run: crawlRuns, sourceKey: sources.key })
       .from(crawlRuns)
@@ -97,6 +98,32 @@ export class PgCrawlRunQueryRepo implements CrawlRunQueryRepo {
       .limit(1);
     const row = rows[0];
     return row ? toCrawlRunDto(row.run, row.sourceKey) : null;
+  }
+
+  async recentForSource(sourceKey: string, limit: number): Promise<CrawlRunWithMetrics[]> {
+    const rows = await this.db
+      .select({ run: crawlRuns, sourceKey: sources.key })
+      .from(crawlRuns)
+      .innerJoin(sources, eq(sources.id, crawlRuns.sourceId))
+      .where(eq(sources.key, sourceKey))
+      .orderBy(desc(crawlRuns.createdAt), desc(crawlRuns.id))
+      .limit(limit);
+    return rows.map((row) => toCrawlRunDto(row.run, row.sourceKey));
+  }
+}
+
+export class PgSourceHealthRepo implements SourceHealthRepo {
+  constructor(private readonly db: Database) {}
+
+  async recentRuns(sourceKey: string, limit: number): Promise<CrawlRunWithMetrics[]> {
+    const rows = await this.db
+      .select({ run: crawlRuns, sourceKey: sources.key })
+      .from(crawlRuns)
+      .innerJoin(sources, eq(sources.id, crawlRuns.sourceId))
+      .where(eq(sources.key, sourceKey))
+      .orderBy(desc(crawlRuns.createdAt), desc(crawlRuns.id))
+      .limit(limit);
+    return rows.map((row) => toCrawlRunDto(row.run, row.sourceKey));
   }
 }
 
@@ -117,6 +144,17 @@ export class PgUserRepo implements UserRepo {
       .where(eq(users.email, email.toLowerCase()))
       .limit(1);
     return rows[0] ?? null;
+  }
+
+  async findMfaConfig(_userId: string): Promise<import('../ports').UserMfaConfig> {
+    return { mfaEnabled: false };
+  }
+
+  async updateMfaRecoveryCodes(userId: string, remainingCodes: string[]): Promise<void> {
+    await this.db
+      .update(users)
+      .set({ mfaRecoveryCodes: JSON.stringify(remainingCodes), updatedAt: new Date() })
+      .where(eq(users.id, userId));
   }
 
   async create(
@@ -278,6 +316,7 @@ export interface ApiRepositories {
   listings: ListingQueryRepo;
   sources: SourceAdminRepo;
   crawlRuns: CrawlRunQueryRepo;
+  health: SourceHealthRepo;
 }
 
 export function createApiRepositories(db: Database): ApiRepositories {
@@ -287,5 +326,6 @@ export function createApiRepositories(db: Database): ApiRepositories {
     listings: new PgListingQueryRepo(db),
     sources: new PgSourceAdminRepo(db),
     crawlRuns: new PgCrawlRunQueryRepo(db),
+    health: new PgSourceHealthRepo(db),
   };
 }

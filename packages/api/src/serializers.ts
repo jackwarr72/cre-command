@@ -1,5 +1,5 @@
 import type { CrawlRunRow, ListingRow, SourceRow, UserRow } from '@cre/db';
-import type { CrawlRun, Listing, User } from '@cre/shared';
+import type { CrawlRun, CrawlRunWithMetrics, CrawlRunMetrics, Listing, User } from '@cre/shared';
 
 import type { SourceDto } from './ports';
 
@@ -37,7 +37,43 @@ export function toSourceDto(row: SourceRow): SourceDto {
   };
 }
 
-export function toCrawlRunDto(row: CrawlRunRow, sourceKey: string): CrawlRun {
+export function toCrawlRunDto(row: CrawlRunRow, sourceKey: string): CrawlRunWithMetrics {
+  const metrics: CrawlRunMetrics = row.metrics ?? {
+    runId: row.id,
+    status: row.status,
+    startedAt: row.startedAt ? row.startedAt.toISOString() : undefined,
+    finishedAt: row.finishedAt ? row.finishedAt.toISOString() : undefined,
+    pagesAttempted: 0,
+    pagesSucceeded: 0,
+    pagesFailed: 0,
+    listingsDiscovered: row.listingsFound,
+    listingsAccepted: row.listingsFound,
+    listingsRejected: 0,
+    duplicateCandidates: 0,
+    listingsCreated: row.listingsAdded,
+    listingsUpdated: row.listingsUpdated,
+    listingsUnchanged: 0,
+    parseErrors: 0,
+    httpErrors: 0,
+    robotsDenials: 0,
+    retryCount: 0,
+    httpStatusCounts: {},
+    requestCount: 0,
+    totalLatencyMs: 0,
+    maxLatencyMs: 0,
+    latencySamplesMs: [],
+    bytesDownloaded: 0,
+    cardsSeen: 0,
+    cardsParsed: 0,
+    cardsRejected: 0,
+    candidatesWithTitle: 0,
+    candidatesWithPrice: 0,
+    candidatesWithAddress: 0,
+    candidatesWithSize: 0,
+    candidatesWithPropertyType: 0,
+    observationsInserted: 0,
+    errors: row.errors,
+  };
   return {
     id: row.id,
     sourceKey,
@@ -49,6 +85,7 @@ export function toCrawlRunDto(row: CrawlRunRow, sourceKey: string): CrawlRun {
     listingsUpdated: row.listingsUpdated,
     errors: row.errors,
     createdAt: iso(row.createdAt),
+    metrics,
   };
 }
 

@@ -214,10 +214,11 @@ describe('HTTP security: credential redaction in logs', () => {
         loggerStream: { write: (msg: string) => void lines.push(msg) },
       },
     });
-    await createUser(h.users, { email: 'operator@cre.test', password: 'secret123' });
+    const password = 'secret123';
+    await createUser(h.users, { email: 'operator@cre.test', password });
 
     // Login: password appears in the request body.
-    const token = await login(h.app, 'operator@cre.test', 'secret123');
+    const token = await login(h.app, 'operator@cre.test', password);
 
     // /me: Bearer token appears in the Authorization header.
     await h.app.inject({
@@ -241,8 +242,9 @@ describe('HTTP security: credential redaction in logs', () => {
         line.includes('/api/auth/login'),
     );
     expect(loginLog).toBeDefined();
-    const loginParsed = JSON.parse(loginLog!.trim());
-    expect(loginParsed.http.body.password).toBe('[REDACTED]');
+    expect(loginLog).not.toContain(password);
+    expect(loginLog).not.toContain(token);
+    expect(loginLog).toContain('[REDACTED]');
 
     const meLog = lines.find(
       (line) =>
@@ -251,8 +253,8 @@ describe('HTTP security: credential redaction in logs', () => {
     );
 
     expect(meLog).toBeDefined();
-    const meParsed = JSON.parse(meLog!.trim());
-    expect(meParsed.http.headers.authorization).toBe('[REDACTED]');
+    expect(meLog).not.toContain(token);
+    expect(meLog).toContain('[REDACTED]');
   });
 });
 

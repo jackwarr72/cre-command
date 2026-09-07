@@ -1,6 +1,13 @@
 import type { CrawlOutcome } from '@cre/crawler';
 import type { CrawlRunRow, ListingRow, SourceRow, UserRow } from '@cre/db';
-import type { CrawlRunStatus, Listing, ListingFilter, Paged } from '@cre/shared';
+import type {
+  CrawlRun,
+  CrawlRunWithMetrics,
+  CrawlRunStatus,
+  Listing,
+  ListingFilter,
+  Paged,
+} from '@cre/shared';
 import type { FastifyInstance } from 'fastify';
 
 import { hashPassword } from '../src/auth/passwords';
@@ -10,9 +17,12 @@ import type {
   CrawlRunQueryRepo,
   CrawlTrigger,
   ListingQueryRepo,
+  MfaChallengeRepo,
   SessionRepo,
   SourceAdminRepo,
+  SourceHealthRepo,
   SourcePolicyPatch,
+  UserMfaConfig,
   UserRepo,
 } from '../src/ports';
 import { toCrawlRunDto, toListingDto } from '../src/serializers';
@@ -117,6 +127,12 @@ export function makeCrawlRunRow(overrides: Partial<CrawlRunRow> = {}): CrawlRunR
 
 export class FakeUserRepo implements UserRepo {
   readonly rows: UserRow[] = [];
+  /** Per-user MFA configuration. Keyed by user id. */
+  readonly mfaByUserId = new Map<string, UserMfaConfig>();
+
+  setMfa(userId: string, config: UserMfaConfig): void {
+    this.mfaByUserId.set(userId, config);
+  }
 
   async count(): Promise<number> {
     return this.rows.length;
@@ -124,6 +140,18 @@ export class FakeUserRepo implements UserRepo {
 
   async findByEmail(email: string): Promise<UserRow | null> {
     return this.rows.find((row) => row.email === email.toLowerCase()) ?? null;
+  }
+
+  async findMfaConfig(userId: string): Promise<UserMfaConfig> {
+    return this.mfaByUserId.get(userId) ?? { mfaEnabled: false };
+  }
+
+  async updateMfaRecoveryCodes(userId: string, remainingCodes: string[]): Promise<void> {
+    const config = this.mfaByUserId.get(userId);
+    if (config) {
+      config.mfaRecoveryCodes = remainingCodes;
+      this.mfaByUserId.set(userId, config);
+    }
   }
 
   async create(
@@ -142,6 +170,40 @@ export class FakeUserRepo implements UserRepo {
     };
     this.rows.push(row);
     return row;
+  }
+}
+
+export class FakeMfaChallengeRepo implements MfaChallengeRepo {
+  private readonly store = new Map<string, { userId: string; expiresAt: Date }>();
+  private seq = 0;
+
+  async create(input: { userId: string; expiresAt: Date }, _now: Date): Promise<string> {
+    const id = `chal-${++this.seq}`;
+    this.store.set(id, { userId: input.userId, expiresAt: input.expiresAt });
+    return id;
+  }
+
+  async consume(challengeId: string, now: Date): Promise<{ userId: string } | null> {
+    const record = this.store.get(challengeId);
+    if (!record) return null;
+    this.store.delete(challengeId);
+    if (record.expiresAt.getTime() <= now.getTime()) return null;
+    return { userId: record.userId };
+  }
+
+  async deleteExpired(now: Date): Promise<number> {
+    let removed = 0;
+    for (const [id, record] of this.store) {
+      if (record.expiresAt.getTime() <= now.getTime()) {
+        this.store.delete(id);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
+  size(): number {
+    return this.store.size;
   }
 }
 
@@ -297,7 +359,7 @@ export class FakeCrawlRunQueryRepo implements CrawlRunQueryRepo {
     filter: { sourceKey?: string; statuses?: CrawlRunStatus[] },
     page: number,
     pageSize: number,
-  ): Promise<Paged<CrawlRun>> {
+  ): Promise<Paged<CrawlRunWithMetrics>> {
     let entries = [...this.rows];
     if (filter.sourceKey) {
       entries = entries.filter((entry) => entry.sourceKey === filter.sourceKey);
@@ -318,9 +380,33 @@ export class FakeCrawlRunQueryRepo implements CrawlRunQueryRepo {
     };
   }
 
-  async findById(id: string): Promise<CrawlRun | null> {
+  async findById(id: string): Promise<CrawlRunWithMetrics | null> {
     const entry = this.rows.find((e) => e.row.id === id);
     return entry ? toCrawlRunDto(entry.row, entry.sourceKey) : null;
+  }
+
+  async recentForSource(sourceKey: string, limit: number): Promise<CrawlRunWithMetrics[]> {
+    return [...this.rows]
+      .filter((entry) => entry.sourceKey === sourceKey)
+      .sort((a, b) => b.row.createdAt.getTime() - a.row.createdAt.getTime())
+      .slice(0, limit)
+      .map((entry) => toCrawlRunDto(entry.row, entry.sourceKey));
+  }
+}
+
+export class FakeSourceHealthRepo implements SourceHealthRepo {
+  readonly runs: Array<{ sourceKey: string; run: CrawlRunRow }> = [];
+
+  add(run: CrawlRunRow, sourceKey: string): void {
+    this.runs.push({ sourceKey, run });
+  }
+
+  async recentRuns(sourceKey: string, limit: number): Promise<CrawlRunWithMetrics[]> {
+    return [...this.runs]
+      .filter((entry) => entry.sourceKey === sourceKey)
+      .sort((a, b) => b.run.createdAt.getTime() - a.run.createdAt.getTime())
+      .slice(0, limit)
+      .map((entry) => toCrawlRunDto(entry.run, entry.sourceKey));
   }
 }
 
@@ -349,6 +435,26 @@ export class FakeCrawlTrigger implements CrawlTrigger {
       listingsUpdated: 0,
       listingsUnchanged: 0,
       errors: [],
+      metrics: {
+        runId: 'run-new',
+        status: 'completed',
+        startedAt: FIXED_NOW.toISOString(),
+        finishedAt: FIXED_NOW.toISOString(),
+        pagesAttempted: 1,
+        pagesSucceeded: 1,
+        pagesFailed: 0,
+        listingsDiscovered: 1,
+        listingsAccepted: 1,
+        listingsRejected: 0,
+        duplicateCandidates: 0,
+        listingsCreated: 1,
+        listingsUpdated: 0,
+        listingsUnchanged: 0,
+        parseErrors: 0,
+        httpErrors: 0,
+        robotsDenials: 0,
+        errors: [],
+      },
       ...this.overrides,
     };
   }
@@ -363,7 +469,9 @@ export interface TestHarness {
   listings: FakeListingQueryRepo;
   sources: FakeSourceAdminRepo;
   crawlRuns: FakeCrawlRunQueryRepo;
+  health: FakeSourceHealthRepo;
   crawl: FakeCrawlTrigger;
+  mfaChallenges: FakeMfaChallengeRepo;
   app: FastifyInstance;
 }
 
@@ -388,7 +496,12 @@ export async function buildTestHarness(
   for (const entry of options.crawlRuns ?? []) {
     crawlRuns.add(entry.row, entry.sourceKey);
   }
+  const health = new FakeSourceHealthRepo();
+  for (const entry of options.crawlRuns ?? []) {
+    health.add(entry.row, entry.sourceKey);
+  }
   const crawl = new FakeCrawlTrigger();
+  const mfaChallenges = new FakeMfaChallengeRepo();
 
   const deps: AppDeps = {
     users,
@@ -396,13 +509,15 @@ export async function buildTestHarness(
     listings,
     sources,
     crawlRuns,
+    health,
     crawl,
+    mfaChallenges,
     sessionTtlHours: 24,
     now: fixedNow,
     ...options.deps,
   };
   const app = await buildApp(deps);
-  return { deps, users, sessions, listings, sources, crawlRuns, crawl, app };
+  return { deps, users, sessions, listings, sources, crawlRuns, health, crawl, mfaChallenges, app };
 }
 
 export async function createUser(

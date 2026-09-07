@@ -7,7 +7,9 @@ import { registerErrorHandler } from './errors';
 import type { AppDeps, SecurityOptions } from './ports';
 import { registerAuthRoutes } from './routes/auth';
 import { registerCrawlRunRoutes } from './routes/crawlRuns';
+import { registerDashboardRoute } from './routes/dashboard';
 import { registerHealthRoutes } from './routes/health';
+import { registerSourceHealthRoutes } from './routes/sourceHealth';
 import { registerListingRoutes } from './routes/listings';
 import { registerSourceRoutes } from './routes/sources';
 
@@ -19,6 +21,8 @@ export const DEFAULT_SECURITY: SecurityOptions = {
   loginRateLimitMax: 10,
   bodyLimitBytes: 1_048_576,
   trustProxy: false,
+  mfaVerifyRateLimitMax: 5,
+  mfaVerifyRateLimitWindowMs: 60_000,
 };
 
 /**
@@ -143,10 +147,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(
     async (api) => {
       registerHealthRoutes(api);
+      registerSourceHealthRoutes(api, deps);
       registerAuthRoutes(api, deps);
       registerListingRoutes(api, deps);
       registerSourceRoutes(api, deps);
       registerCrawlRunRoutes(api, deps);
+      registerDashboardRoute(api, deps);
     },
     { prefix: '/api' },
   );
