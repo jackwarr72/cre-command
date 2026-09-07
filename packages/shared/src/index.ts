@@ -370,6 +370,99 @@ export interface CrawlRun {
   createdAt: ISODateTime;
 }
 
+export interface CrawlRunWithMetrics extends CrawlRun {
+  metrics?: CrawlRunMetrics;
+}
+
+// ── Source health & observability ────────────────────────────────
+
+export const SOURCE_HEALTH_STATUS = ["healthy", "warning", "critical", "unknown"] as const;
+export type SourceHealthStatus = (typeof SOURCE_HEALTH_STATUS)[number];
+
+export const ANOMALY_SEVERITY = ["critical", "warning"] as const;
+export type AnomalySeverity = (typeof ANOMALY_SEVERITY)[number];
+
+export const ANOMALY_TYPE = [
+  "extraction_anomaly",
+  "listing_volume_drop",
+  "parse_degradation",
+  "transport_degradation",
+] as const;
+export type AnomalyType = (typeof ANOMALY_TYPE)[number];
+
+export interface SourceAnomaly {
+  type: AnomalyType;
+  severity: AnomalySeverity;
+  message: string;
+  /** ISO timestamp when the anomaly was detected. */
+  detectedAt: ISODateTime;
+}
+
+export interface SourceHealth {
+  sourceKey: string;
+  status: SourceHealthStatus;
+  lastAttempt?: ISODateTime;
+  lastSuccess?: ISODateTime;
+  latestRun?: CrawlRunMetrics;
+  /** How listingsDiscovered compares to the previous successful run. */
+  listingVolumeChange?: number;
+  anomalies: SourceAnomaly[];
+}
+
+export interface CrawlRunMetrics {
+  runId: ID;
+  status: CrawlRunStatus;
+  startedAt?: ISODateTime;
+  finishedAt?: ISODateTime;
+  durationMs?: number;
+  pagesAttempted: number;
+  pagesSucceeded: number;
+  pagesFailed: number;
+  listingsDiscovered: number;
+  listingsAccepted: number;
+  listingsRejected: number;
+  duplicateCandidates: number;
+  listingsCreated: number;
+  listingsUpdated: number;
+  listingsUnchanged: number;
+  parseErrors: number;
+  httpErrors: number;
+  robotsDenials: number;
+  /** Number of HTTP requests that were retried before success or final failure. */
+  retryCount: number;
+  /** HTTP status code → count, e.g. { "200": 42, "503": 3 }. */
+  httpStatusCounts: Record<string, number>;
+  /** Total number of HTTP requests attempted (including retries). */
+  requestCount: number;
+  /** Sum of all per-request latencies in ms (for computing average). */
+  totalLatencyMs: number;
+  /** Maximum single-request latency in ms. */
+  maxLatencyMs: number;
+  /** Bounded latency samples (capped at 1000) for percentile estimation. */
+  latencySamplesMs: number[];
+  /** Total bytes downloaded across all successful page fetches. */
+  bytesDownloaded: number;
+  /** Listing cards seen in the raw HTML across all pages. */
+  cardsSeen: number;
+  /** Cards that produced a validated ListingCandidate. */
+  cardsParsed: number;
+  /** Cards rejected (missing ID, URL, or failed schema validation). */
+  cardsRejected: number;
+  /** Candidates with a title field. */
+  candidatesWithTitle: number;
+  /** Candidates with a price field. */
+  candidatesWithPrice: number;
+  /** Candidates with an address field. */
+  candidatesWithAddress: number;
+  /** Candidates with a size field. */
+  candidatesWithSize: number;
+  /** Candidates with a propertyType field. */
+  candidatesWithPropertyType: number;
+  /** Observations appended (one per candidate, including unchanged). */
+  observationsInserted: number;
+  errors: CrawlError[];
+}
+
 // ── Filters, exports & API shapes ────────────────────────────────
 
 export interface ListingFilter {
@@ -430,10 +523,43 @@ export interface ApiErrorBody {
 export interface LoginRequest {
   email: string;
   password: string;
+  /** Optional MFA/TOTP code presented to satisfy the second factor. */
+  mfaCode?: string;
+  /**
+   * One-time backup recovery code when TOTP is unavailable.
+   * Each code can only be used once; new codes must be provisioned.
+   */
+  mfaRecoveryCode?: string;
+  /**
+   * Identifier of the in-progress MFA challenge. Required when submitting
+   * `mfaCode` or `mfaRecoveryCode` to associate the code with a specific challenge.
+   */
+  mfaChallengeId?: string;
+  /** Stable per-device token used to remember trusted devices. */
+  deviceFingerprint?: string;
 }
 
 export interface LoginResponse {
   user: User;
   token: string;
   expiresAt: ISODateTime;
+  /**
+   * Opaque refresh token used to obtain a new access token without re-entering
+   * credentials. Only present when MFA is satisfied and the session is long-lived.
+   */
+  refreshToken?: string;
+  /**
+   * When the server requires a second factor, the login returns 200 with
+   * `mfaRequired: true` and no token. The client must resubmit the login
+   * request with the same credentials plus `mfaCode`.
+   */
+  mfaRequired?: boolean;
+  /**
+   * Identifier of the in-progress MFA challenge. The client should echo this
+   * back when submitting the MFA code so the server can match the challenge
+   * to the pending login attempt.
+   */
+  mfaChallengeId?: string;
+  /** Seconds until the MFA challenge expires. */
+  mfaChallengeTtlSeconds?: number;
 }

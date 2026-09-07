@@ -38,6 +38,7 @@ import {
 import {
   CRAWL_RUN_STATUSES,
   type CrawlError,
+  type CrawlRunMetrics,
   LISTING_STATUSES,
   LISTING_TYPES,
   PRICE_UNITS,
@@ -214,6 +215,11 @@ export const crawlRuns = pgTable(
       .$type<CrawlError[]>()
       .notNull()
       .default(sql`'[]'::jsonb`),
+    /** Structured ingestion metrics for observability & anomaly detection. */
+    metrics: jsonb('metrics')
+      .$type<CrawlRunMetrics>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { mode: 'date' }).notNull().defaultNow(),
   },
   (t) => [
@@ -236,13 +242,32 @@ export const users = pgTable(
     /** bcrypt hash — credentials never leave this table. */
     passwordHash: text('password_hash').notNull(),
     active: boolean('active').notNull().default(true),
+    /** Whether MFA (TOTP) is enabled for this user. */
+    mfaEnabled: boolean('mfa_enabled').notNull().default(false),
+    /**
+     * AES-256-GCM encrypted TOTP base32 secret. Decrypted only in-memory
+     * during verification using MFA_ENCRYPTION_KEY.
+     */
+    mfaSecretEncrypted: text('mfa_secret_encrypted'),
+    /** Initialization vector (hex) used for AES-256-GCM encryption of the MFA secret. */
+    mfaSecretIv: text('mfa_secret_iv'),
+    /**
+     * bcrypt-hashed one-time recovery codes (JSON array). Each code is used once;
+     * the array is replaced when all codes are exhausted.
+     */
+    mfaRecoveryCodes: text('mfa_recovery_codes').notNull().default("'[]'"),
+    /** When MFA was last successfully verified (tracks enrollment age). */
+    mfaVerifiedAt: timestamp('mfa_verified_at', { mode: 'date' }),
     createdAt: timestamp('created_at', { mode: 'date' }).notNull().defaultNow(),
     updatedAt: timestamp('updated_at', { mode: 'date' })
       .notNull()
       .defaultNow()
       .$onUpdate(() => sql`now()`),
   },
-  (t) => [uniqueIndex('users_email_uidx').on(t.email)],
+  (t) => [
+    uniqueIndex('users_email_uidx').on(t.email),
+    index('users_mfa_enabled_idx').on(t.mfaEnabled).where(sql`mfa_enabled = true`),
+  ],
 );
 
 export const sessions = pgTable(
