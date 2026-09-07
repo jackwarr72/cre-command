@@ -444,3 +444,106 @@ describe('Crawler — crawl pipeline', () => {
     expect(h.listings.rows.map((r) => r.externalId)).toEqual(['ext-1', 'ext-3']);
   });
 });
+
+describe('Crawler — latency sampling invariant', () => {
+  it('latencySamplesMs never exceeds 1000 entries regardless of crawl size', async () => {
+    const urls = Array.from({ length: 500 }, (_, i) => `https://example.test/page/${i + 1}`);
+    const bodies: Record<string, string> = {};
+    for (const url of urls) bodies[url] = '';
+
+    const h = harness({ bodies });
+    h.page.candidates = [makeCandidate()];
+    const outcome = await h.crawl(urls);
+
+    expect(outcome.metrics).toBeDefined();
+    expect(outcome.metrics!.requestCount).toBe(500);
+    expect(outcome.metrics!.latencySamplesMs.length).toBeLessThanOrEqual(1000);
+    expect(outcome.metrics!.latencySamplesMs.length).toBe(500);
+  });
+});
+
+describe('Crawler — compliance metrics', () => {
+  it('counts HTTP status codes in metrics', async () => {
+    const h = harness();
+    h.page.candidates = [makeCandidate()];
+    await h.crawl(['https://example.test/page/1']);
+
+    expect(h.crawlRuns.finished[0].accounting.metrics.httpStatusCounts).toEqual({ '200': 1 });
+  });
+
+  it('counts robots denials in metrics', async () => {
+    const h = harness({
+      robots: () => ({ allowed: false, reason: 'rules_disallow' as const }),
+    });
+    h.page.candidates = [makeCandidate()];
+    await h.crawl(['https://example.test/page/1']);
+
+    expect(h.crawlRuns.finished[0].accounting.metrics.robotsDenials).toBe(1);
+    expect(h.crawlRuns.finished[0].accounting.metrics.pagesFailed).toBe(1);
+  });
+
+  it('counts retries from HTTP responses', async () => {
+    const retriedHttp: HttpClient = {
+      async get(_url: string): Promise<HttpResponse> {
+        return { status: 200, url: '', body: '', headers: {}, retries: 3 };
+      },
+    };
+    const source = makeSource();
+    const listings = new FakeListings();
+    const observations = new FakeObservations();
+    const crawlRuns = new FakeCrawlRuns();
+
+    const crawler = new Crawler({
+      repositories: { sources: new FakeSources(new Map([[source.key, source]])), listings, observations, crawlRuns } satisfies CrawlerRepositories,
+      http: retriedHttp,
+      robots: new FakeRobots(),
+      clock,
+    });
+
+    const outcome = await crawler.crawl({
+      adapter: {
+        sourceKey: 'test-source',
+        canHandle: () => true,
+        parse: () => ({ candidates: [makeCandidate()], errors: [] }),
+      },
+      urls: ['https://example.test/page/1'],
+    });
+
+    expect(outcome.metrics!.retryCount).toBe(3);
+  });
+
+  it('tracks total bytes downloaded from response bodies', async () => {
+    const h = harness();
+    h.page.candidates = [makeCandidate()];
+    await h.crawl(['https://example.test/page/1']);
+
+    expect(h.crawlRuns.finished[0].accounting.metrics.bytesDownloaded).toBe(0); // empty body
+  });
+
+  it('tracks cardsSeen, cardsParsed, cardsRejected from adapter output', async () => {
+    const h = harness();
+    h.page.candidates = [makeCandidate(), makeCandidate()];
+    h.page.errors = [{ message: 'malformed card', context: { index: 2 } }];
+    await h.crawl(['https://example.test/page/1']);
+
+    const m = h.crawlRuns.finished[0].accounting.metrics;
+    expect(m.cardsSeen).toBe(3); // 2 candidates + 1 error
+    expect(m.cardsParsed).toBe(2);
+    expect(m.cardsRejected).toBe(1);
+  });
+
+  it('tracks field completeness counters for candidates', async () => {
+    const h = harness();
+    h.page.candidates = [makeCandidate(), makeCandidate()];
+    await h.crawl(['https://example.test/page/1']);
+
+    const m = h.crawlRuns.finished[0].accounting.metrics;
+    // makeCandidate creates candidates with title, price, size, propertyType
+    // but no address (address is optional in makeCandidate)
+    expect(m.candidatesWithTitle).toBe(2);
+    expect(m.candidatesWithPrice).toBe(2);
+    expect(m.candidatesWithAddress).toBe(0); // no address set in makeCandidate
+    expect(m.candidatesWithSize).toBe(2);
+    expect(m.candidatesWithPropertyType).toBe(2);
+  });
+});

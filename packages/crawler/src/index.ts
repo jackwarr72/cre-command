@@ -21,4 +21,5 @@ export * from './robots';
 export * from './registry';
 export * from './crawl';
 export * from './fingerprint';
+export * from './metrics';
 export * from './postgres/repositories';

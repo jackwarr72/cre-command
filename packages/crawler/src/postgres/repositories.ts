@@ -148,6 +148,7 @@ export class PgCrawlRunRepository implements CrawlRunRepository {
         listingsAdded: accounting.listingsAdded,
         listingsUpdated: accounting.listingsUpdated,
         errors: accounting.errors,
+        metrics: accounting.metrics,
       })
       .where(eq(crawlRuns.id, runId));
   }

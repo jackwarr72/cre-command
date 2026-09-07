@@ -6,13 +6,15 @@
 </head>
 <body>
   <div class="page-content">
-    <span class="posting-count">6 avisos</span>
+    <span class="posting-count">25 avisos</span>
 
     <div class="postings-container">
 
+      <!-- Card 1: Standard MXN office lease (all fields present) -->
       <div class="posting has-gallery" data-id="422131234">
         <a class="posting-link" href="/s/ofertas/oficinas-en-renta/ciudad-de-mexico/polanco/422131234">
           <img class="posting-image" src="/img/oficina-polanco-01.jpg" alt="Oficina en renta Polanco" />
+          <img class="posting-image" src="/img/oficina-polanco-02.jpg" alt="Interior oficina" />
           <div class="posting-title">Oficina en renta de 2,300 m² en Polanco</div>
           <div class="posting-description">Oficina clase A, recepción y estacionamiento. Dos niveles en torre corporativa.</div>
           <div class="posting-price">MXN $ 18,500 /m²/mes</div>
@@ -25,35 +27,98 @@
         </a>
       </div>
 
-      <div class="posting" data-id="419874123">
-        <a class="posting-link" href="/s/ofertas/terrenos-en-venta/estado-de-mexico/atlacomulco/419874123">
-          <div class="posting-title">Terreno en venta de 2.5 ha en Atlacomulco</div>
-          <div class="posting-price">$6,500,000</div>
-          <div class="posting-location"><span class="posting-location-city">Atlacomulco</span>, <span class="posting-location-state">Estado de México</span></div>
-        </a>
-      </div>
-
-      <div class="posting" data-id="418002991">
-        <a class="posting-link" href="/s/ofertas/locales-en-renta/ciudad-de-mexico/condesa/418002991">
-          <div class="posting-title">Local en renta en La Condesa</div>
-          <div class="posting-price">MXN $ 42,000 /mes</div>
-          <div class="posting-details"><span class="posting-detail-size">280 m²</span></div>
-          <div class="posting-location"><span class="posting-location-city">La Condesa</span>, <span class="posting-location-state">Ciudad de México</span></div>
-        </a>
-      </div>
-
-      <div class="posting" data-id="500000001">
-        <a class="posting-link" href="/s/ofertas/bodegas-en-renta/nuevo-leon/monterrey/500000001">
-          <div class="posting-title">Bodega industrial en renta — 5,000 m²</div>
-          <div class="posting-price">MXN $ 120,000 /mes</div>
-          <div class="posting-details">
-            <span class="posting-detail-size">5,000 m²</span>
-            <span class="posting-detail-size">10,000 m²</span>
-          </div>
+      <!-- Card 2: USD land sale, all fields -->
+      <div class="posting" data-id="700000001">
+        <a class="posting-link" href="/s/ofertas/terrenos-en-venta/nuevo-leon/monterrey/700000001">
+          <div class="posting-title">Terreno comercial en venta — 10 ha</div>
+          <div class="posting-price">USD $ 2,500,000</div>
+          <div class="posting-details"><span class="posting-detail-size">10 ha</span></div>
           <div class="posting-location"><span class="posting-location-city">Monterrey</span>, <span class="posting-location-state">Nuevo León</span></div>
+          <time class="posting-date" datetime="2026-08-25T08:30:00Z">Hace 5 días</time>
         </a>
       </div>
 
+      <!-- Card 3: Missing price (retail lease) -->
+      <div class="posting" data-id="700000002">
+        <a class="posting-link" href="/s/ofertas/locales-en-renta/ciudad-de-mexico/roma/700000002">
+          <div class="posting-title">Local en renta en Roma Norte — 120 m²</div>
+          <div class="posting-details"><span class="posting-detail-size">120 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Ciudad de México</span>, <span class="posting-location-state">Ciudad de México</span></div>
+        </a>
+      </div>
+
+      <!-- Card 4: sqft size (industrial warehouse) -->
+      <div class="posting" data-id="700000003">
+        <a class="posting-link" href="/s/ofertas/bodegas-en-renta/nuevo-leon/monterrey/700000003">
+          <div class="posting-title">Bodega industrial 5,000 sq ft con oficina</div>
+          <div class="posting-price">$ 120,000 /mes</div>
+          <div class="posting-details"><span class="posting-detail-size">5,000 sqft</span></div>
+          <div class="posting-location"><span class="posting-location-city">Monterrey</span>, <span class="posting-location-state">Nuevo León</span></div>
+          <time class="posting-date" datetime="2026-08-20T14:00:00Z">Hace 10 días</time>
+        </a>
+      </div>
+
+      <!-- Card 5: Hectare land area with USD -->
+      <div class="posting" data-id="700000004">
+        <a class="posting-link" href="/s/ofertas/terrenos-en-venta/aguascalientes/aguascalientes/700000004">
+          <div class="posting-title">Terreno de 5.5 ha para desarrollo industrial</div>
+          <div class="posting-price">USD $ 800,000</div>
+          <div class="posting-details"><span class="posting-detail-size">5.5 ha</span></div>
+          <div class="posting-location"><span class="posting-location-city">Aguascalientes</span>, <span class="posting-location-state">Aguascalientes</span></div>
+        </a>
+      </div>
+
+      <!-- Card 6: Missing size, sale, office -->
+      <div class="posting" data-id="700000005">
+        <a class="posting-link" href="/s/ofertas/oficinas-en-venta/ciudad-de-mexico/condesa/700000005">
+          <div class="posting-title">Oficina en venta — Torre Reforma</div>
+          <div class="posting-price">MXN $ 8,500,000</div>
+          <div class="posting-location"><span class="posting-location-city">Ciudad de México</span>, <span class="posting-location-state">Ciudad de México</span></div>
+          <time class="posting-date" datetime="2026-08-26T09:00:00Z">Hace 4 días</time>
+        </a>
+      </div>
+
+      <!-- Card 7: Incomplete address (city only) -->
+      <div class="posting" data-id="700000006">
+        <a class="posting-link" href="/s/ofertas/casas-en-renta/jalisco/guadalajara/700000006">
+          <div class="posting-title">Casa de campo en renta</div>
+          <div class="posting-price">MXN $ 35,000 /mes</div>
+          <div class="posting-details"><span class="posting-detail-size">450 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Guadalajara</span></div>
+        </a>
+      </div>
+
+      <!-- Card 8: Special Unicode characters in title -->
+      <div class="posting" data-id="700000007">
+        <a class="posting-link" href="/s/ofertas/oficinas-en-renta/ciudad-de-mexico/michel/700000007">
+          <div class="posting-title">Oficina con acabados de lujo — ® ™ ñ é í ó ú</div>
+          <div class="posting-price">MXN $ 25,000 /m²/mes</div>
+          <div class="posting-details"><span class="posting-detail-size">1,800 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">México City</span>, <span class="posting-location-state">Ciudad de México</span></div>
+        </a>
+      </div>
+
+      <!-- Card 9: Malformed price (no amount, just text) -->
+      <div class="posting" data-id="700000008">
+        <a class="posting-link" href="/s/ofertas/departamentos-en-renta/ciudad-de-mexico/condesa/700000008">
+          <div class="posting-title">Departamento 120 m² en Condesa</div>
+          <div class="posting-price">Precio a consultar</div>
+          <div class="posting-details"><span class="posting-detail-size">120 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Ciudad de México</span>, <span class="posting-location-state">Ciudad de México</span></div>
+        </a>
+      </div>
+
+      <!-- Card 10: Missing description, no image -->
+      <div class="posting" data-id="700000009">
+        <a class="posting-link" href="/s/ofertas/locales-en-renta/queretaro/queretaro/700000009">
+          <div class="posting-title">Local comercial 80 m²</div>
+          <div class="posting-price">MXN $ 18,000 /mes</div>
+          <div class="posting-details"><span class="posting-detail-size">80 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Querétaro</span>, <span class="posting-location-state">Querétaro</span></div>
+        </a>
+      </div>
+
+      <!-- Card 11: Duplicate externalId (same as card 1) -->
       <div class="posting" data-id="422131234">
         <a class="posting-link" href="/s/ofertas/oficinas-en-renta/ciudad-de-mexico/polanco/422131234">
           <div class="posting-title">Oficina en renta de 2,300 m² en Polanco</div>
@@ -63,12 +128,150 @@
         </a>
       </div>
 
-      <div class="posting" data-id="600000001">
-        <a class="posting-link" href="/s/ofertas/casas-en-venta/jalisco/guadalajara/600000001">
-          <div class="posting-title">Casa en venta — sin datos completos</div>
-          <div class="posting-location"><span class="posting-location-city">Guadalajara</span>, <span class="posting-location-state">Jalisco</span></div>
+      <!-- Card 12: Duplicate canonical URL (different externalId, same URL) -->
+      <div class="posting" data-id="700000010">
+        <a class="posting-link" href="/s/ofertas/locales-en-renta/ciudad-de-mexico/condesa/418002991">
+          <div class="posting-title">Local en renta en La Condesa (copy)</div>
+          <div class="posting-price">MXN $ 42,000 /mes</div>
+          <div class="posting-details"><span class="posting-detail-size">280 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">La Condesa</span>, <span class="posting-location-state">Ciudad de México</span></div>
         </a>
       </div>
+
+      <!-- Card 13: Multiple property types (industrial / warehouse) -->
+      <div class="posting" data-id="700000011">
+        <a class="posting-link" href="/s/ofertas/naves-industriales-en-renta/puebla/puebla/700000011">
+          <div class="posting-title">Nave industrial 3,000 m² con oficina</div>
+          <div class="posting-price">MXN $ 80,000 /mes</div>
+          <div class="posting-details"><span class="posting-detail-size">3,000 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Puebla</span>, <span class="posting-location-state">Puebla</span></div>
+        </a>
+      </div>
+
+      <!-- Card 14: Acres lot size -->
+      <div class="posting" data-id="700000012">
+        <a class="posting-link" href="/s/ofertas/terrenos-en-venta/estado-de-mexico/toluca/700000012">
+          <div class="posting-title">Terreno de 15 acres en venta</div>
+          <div class="posting-price">MXN $ 4,500,000</div>
+          <div class="posting-details"><span class="posting-detail-size">15 acres</span></div>
+          <div class="posting-location"><span class="posting-location-city">Toluca</span>, <span class="posting-location-state">Estado de México</span></div>
+        </a>
+      </div>
+
+      <!-- Card 15: sqm-year lease with USD -->
+      <div class="posting" data-id="700000013">
+        <a class="posting-link" href="/s/ofertas/oficinas-en-renta/queretaro/queretaro/700000013">
+          <div class="posting-title">Oficina corporativa en renta — 1,200 m²</div>
+          <div class="posting-price">USD $ 150,000 /m²/año</div>
+          <div class="posting-details"><span class="posting-detail-size">1,200 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Querétaro</span>, <span class="posting-location-state">Querétaro</span></div>
+        </a>
+      </div>
+
+      <!-- Card 16: Empty optional fields (no address, no description) -->
+      <div class="posting" data-id="700000014">
+        <a class="posting-link" href="/s/ofertas/locales-en-renta/monterrey/monterrey/700000014">
+          <div class="posting-title">Local en Alcaldía</div>
+          <div class="posting-price">MXN $ 22,000 /mes</div>
+          <div class="posting-details"><span class="posting-detail-size">150 m²</span></div>
+        </a>
+      </div>
+
+      <!-- Card 17: USD sqft-month lease in northern Mexico -->
+      <div class="posting" data-id="700000015">
+        <a class="posting-link" href="/s/ofertas/locales-en-renta/nuevo-leon/monterrey/700000015">
+          <div class="posting-title">Local de servicios 2,500 sq ft</div>
+          <div class="posting-price">USD $ 15 /ft²/mes</div>
+          <div class="posting-details"><span class="posting-detail-size">2,500 sqft</span></div>
+          <div class="posting-location"><span class="posting-location-city">Monterrey</span>, <span class="posting-location-state">Nuevo León</span></div>
+        </a>
+      </div>
+
+      <!-- Card 18: Missing address state -->
+      <div class="posting" data-id="700000016">
+        <a class="posting-link" href="/s/ofertas/casas-en-venta/estado-de-mexico/atlacomulco/700000016">
+          <div class="posting-title">Casa en venta con jardín</div>
+          <div class="posting-price">MXN $ 2,800,000</div>
+          <div class="posting-details"><span class="posting-detail-size">350 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Atlacomulco</span></div>
+        </a>
+      </div>
+
+      <!-- Card 19: EUR listing -->
+      <div class="posting" data-id="700000017">
+        <a class="posting-link" href="/s/ofertas/oficinas-en-venta/estado-de-mexico/toluca/700000017">
+          <div class="posting-title">Oficina en venta — edificio corporativo</div>
+          <div class="posting-price">€ 500,000</div>
+          <div class="posting-details"><span class="posting-detail-size">800 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Toluca</span>, <span class="posting-location-state">Estado de México</span></div>
+        </a>
+      </div>
+
+      <!-- Card 20: No title (edge case: malformed listing structure) -->
+      <div class="posting" data-id="700000018">
+        <a class="posting-link" href="/s/ofertas/locales-en-renta/monterrey/monterrey/700000018">
+          <div class="posting-price">MXN $ 22,000 /mes</div>
+          <div class="posting-details"><span class="posting-detail-size">150 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Monterrey</span>, <span class="posting-location-state">Nuevo León</span></div>
+        </a>
+      </div>
+
+      <!-- Card 21: Duplicate canonical URL (different externalId, same URL as card 12) -->
+      <div class="posting" data-id="700000019">
+        <a class="posting-link" href="/s/ofertas/locales-en-renta/ciudad-de-mexico/condesa/418002991">
+          <div class="posting-title">Local en renta en La Condesa (variant)</div>
+          <div class="posting-price">MXN $ 42,000 /mes</div>
+          <div class="posting-details"><span class="posting-detail-size">280 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">La Condesa</span>, <span class="posting-location-state">Ciudad de México</span></div>
+        </a>
+      </div>
+
+      <!-- Card 22: Missing price, missing size, retail sale -->
+      <div class="posting" data-id="700000020">
+        <a class="posting-link" href="/s/ofertas/locales-en-venta/ciudad-de-mexico/condesa/700000020">
+          <div class="posting-title">Local comercial en venta</div>
+          <div class="posting-location"><span class="posting-location-city">Ciudad de México</span>, <span class="posting-location-state">Ciudad de México</span></div>
+          <time class="posting-date" datetime="2026-08-22T11:00:00Z">Hace 8 días</time>
+        </a>
+      </div>
+
+      <!-- Card 23: Multiple images -->
+      <div class="posting" data-id="700000021">
+        <a class="posting-link" href="/s/ofertas/oficinas-en-renta/puebla/puebla/700000021">
+          <img class="posting-image" src="/img/multi-01.jpg" alt="View 1" />
+          <img class="posting-image" src="/img/multi-02.jpg" alt="View 2" />
+          <img class="posting-image" src="/img/multi-03.jpg" alt="View 3" />
+          <div class="posting-title">Edificio corporativo 2,000 m² en Puebla</div>
+          <div class="posting-price">MXN $ 35,000 /m²/mes</div>
+          <div class="posting-details"><span class="posting-detail-size">2,000 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Puebla</span>, <span class="posting-location-state">Puebla</span></div>
+          <time class="posting-date" datetime="2026-08-24T16:00:00Z">Hace 6 días</time>
+        </a>
+      </div>
+
+      <!-- Card 24: Multifamily apartment sale -->
+      <div class="posting" data-id="700000022">
+        <a class="posting-link" href="/s/ofertas/departamentos-en-venta/estado-de-mexico/toluca/700000022">
+          <div class="posting-title">Departamento 2 recámaras en venta — 140 m²</div>
+          <div class="posting-price">MXN $ 2,200,000</div>
+          <div class="posting-details"><span class="posting-detail-size">140 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Toluca</span>, <span class="posting-location-state">Estado de México</span></div>
+          <time class="posting-date" datetime="2026-08-23T10:00:00Z">Hace 7 días</time>
+        </a>
+      </div>
+
+      <!-- Card 25: Mixed listing-status keywords in path -->
+      <div class="posting" data-id="700000023">
+        <a class="posting-link" href="/s/ofertas/locales-en-renta/sinaloa/culiacan/700000023">
+          <div class="posting-title">Local comercial 100 m² — zona centro</div>
+          <div class="posting-price">MXN $ 16,000 /mes</div>
+          <div class="posting-details"><span class="posting-detail-size">100 m²</span></div>
+          <div class="posting-location"><span class="posting-location-city">Culiacán</span>, <span class="posting-location-state">Sinaloa</span></div>
+          <time class="posting-date" datetime="2026-08-19T12:00:00Z">Hace 11 días</time>
+        </a>
+      </div>
+
+    </div>
 
     </div>
   </div>

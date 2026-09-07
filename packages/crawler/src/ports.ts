@@ -8,7 +8,7 @@
  * deduplication, and persistence rules testable without a framework.
  */
 
-import type { CrawlError, CrawlRunStatus, ListingCandidate, RobotsPolicy } from '@cre/shared';
+import type { CrawlError, CrawlRunMetrics, CrawlRunStatus, ListingCandidate, RobotsPolicy } from '@cre/shared';
 import type { SourceRow } from '@cre/db';
 
 /** Injectable clock — deterministic time in tests. */
@@ -25,6 +25,10 @@ export interface HttpResponse {
   url: string;
   body: string;
   headers: Record<string, string>;
+  /** Number of retries before this response (0 = first attempt succeeded). */
+  retries?: number;
+  /** Time in ms spent on this request (including retries). */
+  latencyMs?: number;
 }
 
 /**
@@ -101,6 +105,8 @@ export interface CrawlRunAccounting {
   listingsAdded: number;
   listingsUpdated: number;
   errors: CrawlError[];
+  /** Extended metrics persisted alongside the run. */
+  metrics: CrawlRunMetrics;
 }
 
 export interface CrawlRunRepository {
