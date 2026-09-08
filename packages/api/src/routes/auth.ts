@@ -468,10 +468,6 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
   );
 
   app.get('/auth/me', { preHandler: guards.requireAuth }, async (request) => {
-    // In bypass mode, return the development user
-    if (request.developmentUser) {
-      return request.developmentUser;
-    }
     return request.user;
   });
 
