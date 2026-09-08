@@ -74,7 +74,7 @@ export interface ApiConfig {
   host: string;
   /** `production` enables fail-closed defaults (empty CORS allowlist, etc.). */
   nodeEnv: 'development' | 'production' | 'test';
-  /** Exact origins allowed to call the API from a browser. Empty = same-origin. */
+  /** Exact origins allowed to call the API from a browser. Empty = same-origin only. */
   corsOrigins: string[];
   /** Global sliding-window cap: max requests per time window per IP. */
   rateLimitMax: number;
@@ -109,6 +109,8 @@ export interface ApiConfig {
   mfaVerifyRateLimitMax: number;
   /** Rate limit window for MFA verification in milliseconds. */
   mfaVerifyRateLimitWindowMs: number;
+  /** Development-only auth bypass: skips authentication and injects a dev user. */
+  authBypass: boolean;
 }
 
 const DEFAULT_BODY_LIMIT_BYTES = 1_048_576; // 1 MiB — the API accepts small JSON only
@@ -195,5 +197,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
       DEFAULT_MFA_VERIFY_RATE_LIMIT_WINDOW_MS,
       'MFA_VERIFY_RATE_LIMIT_WINDOW_MS',
     ),
+    authBypass: booleanFlag(env['AUTH_BYPASS'], false, 'AUTH_BYPASS'),
   };
 }

@@ -18,7 +18,16 @@ import { toUserDto } from '../serializers';
 import { DEFAULT_MFA_CHALLENGE_TTL_MS } from '../config';
 
 /** How the second factor (or none) satisfied the login. */
-type LoginMethod = 'password' | 'totp' | 'recovery_code';
+type LoginMethod = 'password' | 'totp' | 'recovery_code' | 'bypass';
+
+/** Returns a fixed development user when AUTH_BYPASS is enabled. */
+function developmentUser() {
+  return {
+    id: 'development-user',
+    email: 'admin@cre.local',
+    role: 'admin' as const,
+  };
+}
 
 /**
  * Fire-and-record an audit event: a failed audit write must never break the
@@ -56,7 +65,12 @@ function mfaChallengeTtl(deps: AppDeps): number {
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const guards = createAuthGuards(deps.sessions, deps.now);
+  const guards = createAuthGuards(
+    deps.sessions,
+    deps.now,
+    deps.authBypass ?? false,
+    deps.nodeEnv ?? 'development',
+  );
   const ttlMs = (deps.sessionTtlHours ?? 168) * 3_600_000;
   const now = deps.now ?? ((): Date => new Date());
 
@@ -78,6 +92,30 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
     async (request, reply) => {
       const body = loginSchema.parse(request.body);
       const email = body.email.trim().toLowerCase();
+
+      // AUTH_BYPASS mode: return a fixed development admin identity
+      // without checking credentials. Only enabled in development.
+      if (deps.authBypass && deps.nodeEnv === 'development') {
+        const devUser = developmentUser();
+        const at = now();
+        const { token, tokenHash } = newSessionToken();
+        const expiresAt = new Date(at.getTime() + ttlMs);
+        await deps.sessions.create({ userId: devUser.id, tokenHash, expiresAt }, at);
+        await recordAudit(deps, request, {
+          action: 'auth.login.success',
+          at,
+          actorUserId: devUser.id,
+          actorEmail: devUser.email,
+          metadata: { method: 'bypass' },
+        });
+        const response: LoginResponse = {
+          user: toUserDto(devUser),
+          token,
+          expiresAt: expiresAt.toISOString(),
+        };
+        return reply.status(200).send(response);
+      }
+
       let authMethod: LoginMethod = 'password';
       const user = await deps.users.findByEmail(email);
       if (!user || !user.active || !(await verifyPassword(body.password, user.passwordHash))) {
@@ -429,7 +467,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
     },
   );
 
-  app.get('/auth/me', { preHandler: guards.requireAuth }, async (request) => request.user);
+  app.get('/auth/me', { preHandler: guards.requireAuth }, async (request) => {
+    // In bypass mode, return the development user
+    if (request.developmentUser) {
+      return request.developmentUser;
+    }
+    return request.user;
+  });
 
   app.post('/auth/logout', { preHandler: guards.requireAuth }, async (request, reply) => {
     const token = bearerTokenOf(request);

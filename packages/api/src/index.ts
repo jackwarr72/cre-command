@@ -80,6 +80,8 @@ const app = await buildApp({
   },
   logLevel: config.logLevel,
   logger: true,
+  authBypass: config.authBypass,
+  nodeEnv: config.nodeEnv,
 });
 
 // ── Redis connection (opt-in via REDIS_URL) ─────────────────────────

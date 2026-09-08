@@ -10,7 +10,18 @@ declare module 'fastify' {
   interface FastifyRequest {
     /** Set by the auth guards once the Bearer token is resolved. */
     user?: User | null;
+    /** Set when AUTH_BYPASS=true + NODE_ENV=development */
+    developmentUser?: User | null;
   }
+}
+
+/** Returns a fixed development user when AUTH_BYPASS is enabled. */
+function developmentUser(): User {
+  return {
+    id: 'development-user',
+    email: 'admin@cre.local',
+    role: 'admin' as UserRole,
+  };
 }
 
 const BEARER_PREFIX = 'Bearer ';
@@ -33,11 +44,22 @@ export interface AuthGuards {
 /**
  * Builds the route guards. Guards resolve the session themselves (no global
  * hook), so route-level `preHandler`s have no ordering dependencies.
+ *
+ * When AUTH_BYPASS is enabled in development mode, all authenticated routes
+ * inject a fixed development operator/admin identity instead of requiring
+ * a valid session.
  */
-export function createAuthGuards(sessions: SessionRepo, now?: () => Date): AuthGuards {
+export function createAuthGuards(
+  sessions: SessionRepo,
+  now?: () => Date,
+  authBypass = false,
+  nodeEnv = 'development',
+): AuthGuards {
   const clock = now ?? ((): Date => new Date());
+  const isBypass = authBypass && nodeEnv === 'development';
 
   async function resolveUser(request: FastifyRequest): Promise<User | null> {
+    if (isBypass) return developmentUser();
     const token = bearerTokenOf(request);
     if (!token) return null;
     const session = await sessions.findActive(hashToken(token), clock());

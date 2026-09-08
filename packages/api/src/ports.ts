@@ -289,4 +289,8 @@ export interface AppDeps {
    * to stdout.
    */
   loggerStream?: { write(msg: string): void };
+  /** Development auth bypass (AUTH_BYPASS env var). */
+  authBypass?: boolean;
+  /** Current node environment (for bypass validation). */
+  nodeEnv?: 'development' | 'production' | 'test';
 }
