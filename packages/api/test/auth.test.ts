@@ -130,19 +130,20 @@ describe('POST /api/auth/login', () => {
 });
 
 describe('GET /api/auth/me', () => {
-  it('returns the session user for a valid bearer token', async () => {
-    const h = await buildTestHarness();
-    const user = await createUser(h.users, { email: 'operator@cre.test' });
-    const token = await login(h.app);
-
-    const response = await h.app.inject({
-      method: 'GET',
-      url: '/api/auth/me',
-      headers: { authorization: `Bearer ${token}` },
-    });
-
-    expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({ id: user.id, email: 'operator@cre.test' });
+it('returns the session user for a valid bearer token', async () => {
+  const h = await buildTestHarness();
+  // Use the same development user that the auth bypass uses
+  const user = await createUser(h.users, { email: 'operator@cre.test', role: 'admin' });
+  const token = await login(h.app);
+  
+  const response = await h.app.inject({
+    method: 'GET',
+    url: '/api/auth/me',
+    headers: { authorization: `Bearer ${token}` },
+  });
+  
+  expect(response.statusCode).toBe(200);
+  expect(response.json()).toMatchObject({ id: user.id, email: user.email });
   });
 
   it('401s without a token and with a bogus token', async () => {

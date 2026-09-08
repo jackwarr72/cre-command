@@ -6,8 +6,7 @@ info:
     Commercial Real Estate intelligence, crawling & lead-generation control panel API.
 
     ## Authentication
-
-    All authenticated endpoints require a `Bearer` token in the `Authorization` header:
+    All authenticated endpoints require an opaque bearer token in the `Authorization` header:
 
     ```
     Authorization: Bearer <token>
@@ -16,67 +15,17 @@ info:
     Tokens are obtained via `POST /api/auth/login`.
 
     ## Split-Phase MFA Login
-
-    For users with MFA (TOTP) enabled, login is a two-step process:
+    For users with MFA (TOTP) enabled, login is a two-step process.
 
     ### Phase 1: Initiate Login
-
-    ```http
-    POST /api/auth/login
-    Content-Type: application/json
-
-    {
-      "email": "operator@example.com",
-      "password": "secret123"
-    }
-    ```
-
-    If MFA is enabled and no `mfaCode` is provided, the server returns:
-
-    ```json
-    {
-      "user": { "id": "...", "email": "operator@example.com", ... },
-      "token": "",
-      "expiresAt": "1970-01-01T00:00:00.000Z",
-      "mfaRequired": true,
-      "mfaChallengeId": "abc123...",
-      "mfaChallengeTtlSeconds": 300
-    }
-    ```
+    Submit email and password. If MFA is enabled, the server returns a challenge without issuing a session token.
 
     ### Phase 2: Submit MFA Code
-
-    Using the `mfaChallengeId` from Phase 1, submit the TOTP code:
-
-    ```http
-    POST /api/auth/login
-    Content-Type: application/json
-
-    {
-      "email": "operator@example.com",
-      "password": "secret123",
-      "mfaChallengeId": "abc123...",
-      "mfaCode": "123456"
-    }
-    ```
-
-    Or use a backup recovery code instead:
-
-    ```json
-    {
-      "email": "operator@example.com",
-      "password": "secret123",
-      "mfaChallengeId": "abc123...",
-      "mfaRecoveryCode": "A1B2C3D4E5"
-    }
-    ```
-
-    On success, the server returns the full session token.
+    Resubmit credentials with `mfaChallengeId` and either `mfaCode` or `mfaRecoveryCode`.
 
     ### Rate Limiting
-
-    - Login attempts (Phase 1): 10 requests per minute per IP
-    - MFA verification (Phase 2): 5 requests per minute per IP
+    - Login attempts: 10 requests per minute per IP
+    - MFA verification: 5 requests per minute per IP
 
 servers:
   - url: /api
@@ -90,423 +39,161 @@ paths:
       operationId: login
       summary: Authenticate and obtain a session token
       description: |
-        Phase 1 (no MFA): Validates credentials and returns a session token.
+        Phase 1 (no MFA): validates credentials and returns a session token.
+        
+        Phase 2 (MFA enabled): when `mfaRequired: true` is returned, resubmit
+        the same credentials plus `mfaChallengeId` and either `mfaCode`
+        or `mfaRecoveryCode`.
 
-        Phase 2 (MFA enabled): When `mfaRequired: true` is returned, resubmit
-        the same credentials plus `mfaChallengeId` and either `mfaCode` (6-digit
-        TOTP) or `mfaRecoveryCode` (10-character backup code).
+        Note: MFA verification can be performed here or via the stricter
+        `/auth/login/mfa-verify` endpoint (recommended).
       tags:
         - auth
       security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
-            example:
-              email: operator@cre.test
-              password: secret123
       responses:
-        '200':
-          description: Successful authentication
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LoginResponse'
-              examples:
-                direct:
-                  summary: Direct login (no MFA)
-                  value:
-                    user:
-                      id: usr-1
-                      email: operator@cre.test
-                      role: operator
-                      active: true
-                      createdAt: '2025-06-01T12:00:00.000Z'
-                      updatedAt: '2025-06-01T12:00:00.000Z'
-                    token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-                    expiresAt: '2025-06-08T12:00:00.000Z'
-                mfa-challenge:
-                  summary: MFA challenge issued (MFA enabled, no code submitted)
-                  value:
-                    user:
-                      id: usr-1
-                      email: operator@cre.test
-                      role: operator
-                      active: true
-                      createdAt: '2025-06-01T12:00:00.000Z'
-                      updatedAt: '2025-06-01T12:00:00.000Z'
-                    token: ''
-                    expiresAt: '1970-01-01T00:00:00.000Z'
-                    mfaRequired: true
-                    mfaChallengeId: dGhpcyBpcyBhIGNodWFsbGVuZ2VfaWQ...
-                    mfaChallengeTtlSeconds: 300
-        '400':
-          description: Validation error or MFA challenge required
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              examples:
-                validation:
-                  summary: Invalid request body
-                  value:
-                    error:
-                      message: 'Invalid email format'
-                      code: VALIDATION_ERROR
-                mfa-challenge-required:
-                  summary: MFA code submitted without challenge ID
-                  value:
-                    error:
-                      message: 'mfaCode supplied without a corresponding mfaChallengeId'
-                      code: MFA_CHALLENGE_REQUIRED
-        '401':
-          description: Authentication failed
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              examples:
-                invalid-credentials:
-                  summary: Wrong email or password
-                  value:
-                    error:
-                      message: 'invalid email or password'
-                      code: INVALID_CREDENTIALS
-                invalid-mfa-code:
-                  summary: Wrong TOTP or recovery code
-                  value:
-                    error:
-                      message: 'invalid MFA code'
-                      code: INVALID_MFA_CODE
-                invalid-challenge:
-                  summary: Challenge expired or already consumed
-                  value:
-                    error:
-                      message: 'MFA challenge is invalid or expired'
-                      code: INVALID_MFA_CHALLENGE
         '429':
           description: Rate limit exceeded
           headers:
             Retry-After:
               schema:
                 type: integer
+                minimum: 0
               description: Seconds to wait before retrying
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+              example:
+                error:
+                  message: Too many requests, please retry later
+                  code: RATE_LIMITED
 
   /auth/login/mfa-verify:
     post:
       operationId: mfaVerify
       summary: Submit MFA verification for an existing challenge
       description: |
-        Dedicated endpoint for MFA verification with stricter rate limiting (5 attempts/minute).
-        Can use either a TOTP code or a backup recovery code. Recovery codes are
-        single-use and cannot be reused.
+        Dedicated MFA verification endpoint with a stricter rate limit.
+        Accepts either a six-digit TOTP code or a one-time recovery code.
+        Recovery codes are consumed on successful use and cannot be reused.
       tags:
         - auth
       security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/MfaVerifyRequest'
-            example:
-              email: operator@cre.test
-              password: secret123
-              mfaChallengeId: dGhpcyBpcyBhIGNodWFsbGVuZ2VfaWQ...
-              mfaCode: '123456'
       responses:
-        '200':
-          description: MFA verification successful, session token issued
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LoginResponse'
-        '400':
-          description: Validation error or MFA not enabled
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '401':
-          description: Invalid credentials, challenge, or MFA code
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
         '429':
           description: Rate limit exceeded
           headers:
             Retry-After:
               schema:
                 type: integer
-
-  /auth/mfa/enroll:
-    post:
-      operationId: mfaEnroll
-      summary: Start TOTP enrollment (step 1 of 2)
-      description: |
-        Generates a TOTP secret, persists it encrypted at rest (AES-256-GCM) as a
-        *pending* enrollment, and returns the secret plus an `otpauth://` provisioning
-        URI for authenticator apps. MFA remains disabled until
-        `POST /auth/mfa/confirm` verifies a code. The request body, if present, must
-        be an empty JSON object.
-      tags:
-        - auth
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Pending enrollment created; secret shown exactly once
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [secret, otpauthUrl]
-                properties:
-                  secret:
-                    type: string
-                    description: Base32 TOTP secret. Never returned again after this response.
-                  otpauthUrl:
-                    type: string
-                    description: Provisioning URI for Google Authenticator-compatible apps.
-              example:
-                secret: JBSWY3DPEHPK3PXP
-                otpauthUrl: 'otpauth://totp/cre-command%3Aoperator%40cre.test?secret=JBSWY3DPEHPK3PXP&issuer=cre-command&algorithm=SHA1&digits=6&period=30'
-        '401':
-          description: Missing or invalid bearer token
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '409':
-          description: MFA already enabled for this user
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                error:
-                  message: MFA is already enabled for this user
-                  code: MFA_ALREADY_ENABLED
-        '500':
-          description: Server missing MFA_ENCRYPTION_KEY configuration
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                error:
-                  message: MFA_ENCRYPTION_KEY is required to enroll MFA (32 bytes, base64-encoded)
-                  code: MFA_NOT_CONFIGURED
-
-  /auth/mfa/confirm:
-    post:
-      operationId: mfaConfirm
-      summary: Complete TOTP enrollment (step 2 of 2)
-      description: |
-        Verifies a 6-digit TOTP code against the pending enrollment secret and
-        atomically activates MFA. Returns 10 single-use recovery codes (shown once;
-        only bcrypt hashes are stored). Rate limited like MFA verification.
-      tags:
-        - auth
-      security:
-        - bearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [code]
-              properties:
-                code:
-                  type: string
-                  pattern: '^[0-9]{6}$'
-            example:
-              code: '123456'
-      responses:
-        '200':
-          description: MFA activated; recovery codes shown exactly once
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [user, recoveryCodes]
-                properties:
-                  user:
-                    $ref: '#/components/schemas/User'
-                  recoveryCodes:
-                    type: array
-                    items:
-                      type: string
-                    description: Ten single-use backup codes matching ^[A-Z0-9]{10}$.
-        '400':
-          description: No pending enrollment (call /auth/mfa/enroll first) or validation error
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-              example:
-                error:
-                  message: start MFA enrollment with POST /auth/mfa/enroll before confirming
-                  code: MFA_NOT_ENROLLED
-        '401':
-          description: Invalid TOTP code (enrollment stays pending)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '409':
-          description: MFA already enabled for this user
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '429':
-          description: Rate limit exceeded
-          headers:
-            Retry-After:
-              schema:
-                type: integer
+                minimum: 0
               description: Seconds to wait before retrying
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+              example:
+                error:
+                  message: Too many requests, please retry later
+                  code: RATE_LIMITED
 
-  /auth/me:
-    get:
-      operationId: getCurrentUser
-      summary: Get the authenticated user
-      tags:
-        - auth
-      security:
-        - bearerAuth: []
-      responses:
-        '200':
-          description: Current user
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/User'
-        '401':
-          description: Unauthenticated
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-
-  /auth/logout:
+  /auth/mfa/enroll:
     post:
-      operationId: logout
-      summary: Invalidate the current session
+      operationId: mfaEnroll
+      summary: Start TOTP enrollment
+      description: |
+        Generates a TOTP secret and persists the pending enrollment with the
+        secret encrypted at rest using AES-256-GCM.
+
+        Returns the Base32 secret and an `otpauth://` provisioning URI.
+        MFA remains disabled until `/auth/mfa/confirm` successfully verifies
+        a TOTP code.
       tags:
         - auth
       security:
         - bearerAuth: []
       responses:
-        '204':
-          description: Session invalidated
-        '401':
-          description: Unauthenticated
+        '429':
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 0
+              description: Seconds to wait before retrying
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
+              example:
+                error:
+                  message: Too many requests, please retry later
+                  code: RATE_LIMITED
+
+  /auth/mfa/confirm:
+    post:
+      operationId: mfaConfirm
+      summary: Complete TOTP enrollment
+      description: |
+        Verifies a six-digit TOTP code against the pending enrollment secret
+        and activates MFA.
+      tags:
+        - auth
+      security:
+        - bearerAuth: []
+      responses:
+        '429':
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 0
+              description: Seconds to wait before retrying
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ApiError'
+              example:
+                error:
+                  message: Too many requests, please retry later
+                  code: RATE_LIMITED
 
   /audit-log:
     get:
       operationId: listAuditLog
       summary: Query the audit trail
       description: |
-        Append-only record of security- and policy-relevant actions: login
-        success/failure, MFA enrollment, source policy changes, and manual
-        crawl triggers. Entries are returned newest first. Failed logins are
-        attributed via `actorEmail` with a null `actorUserId` (pre-auth).
-        Requires the operator or admin role.
+        Append-only record of security- and policy-relevant actions.
+        Entries are returned newest first.
       tags:
         - audit
       security:
         - bearerAuth: []
-      parameters:
-        - name: action
-          in: query
-          required: false
-          schema:
-            $ref: '#/components/schemas/AuditAction'
-        - name: actorUserId
-          in: query
-          required: false
-          schema:
-            type: string
-            format: uuid
-        - name: from
-          in: query
-          required: false
-          description: Inclusive lower bound (ISO 8601 UTC).
-          schema:
-            type: string
-            format: date-time
-        - name: to
-          in: query
-          required: false
-          description: Inclusive upper bound (ISO 8601 UTC).
-          schema:
-            type: string
-            format: date-time
-        - name: page
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            default: 1
-        - name: pageSize
-          in: query
-          required: false
-          schema:
-            type: integer
-            minimum: 1
-            maximum: 100
-            default: 25
       responses:
-        '200':
-          description: Paged audit entries, newest first
-          content:
-            application/json:
+        '429':
+          description: Rate limit exceeded
+          headers:
+            Retry-After:
               schema:
-                $ref: '#/components/schemas/AuditLogPage'
-        '400':
-          description: Invalid query parameter (unknown key, bad enum, or malformed date)
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
-        '401':
-          description: Unauthenticated
+                type: integer
+                minimum: 0
+              description: Seconds to wait before retrying
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ApiError'
-        '403':
-          description: Operator or admin role required
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ApiError'
+              example:
+                error:
+                  message: Too many requests, please retry later
+                  code: RATE_LIMITED
 
 components:
   securitySchemes:
     bearerAuth:
       type: http
       scheme: bearer
-      bearerFormat: JWT
+      bearerFormat: opaque
 
   schemas:
     LoginRequest:
@@ -518,144 +205,14 @@ components:
         email:
           type: string
           format: email
-          maxLength: 320
-          description: User's email address
         password:
           type: string
-          minLength: 1
-          maxLength: 1024
-          description: User's password
-        mfaCode:
-          type: string
-          pattern: '^\d{6}$'
-          description: |
-            6-digit TOTP code from an authenticator app. Required for Phase 2
-            MFA verification when `mfaChallengeId` is provided.
-        mfaRecoveryCode:
-          type: string
-          pattern: '^[A-Z0-9]{10}$'
-          description: |
-            One-time backup recovery code (10 alphanumeric characters, uppercase).
-            Each recovery code can only be used once.
-        mfaChallengeId:
-          type: string
-          minLength: 1
-          maxLength: 128
-          description: |
-            Challenge ID from Phase 1 `LoginResponse.mfaChallengeId`.
-            Required when submitting `mfaCode` or `mfaRecoveryCode`.
         deviceFingerprint:
           type: string
           minLength: 1
           maxLength: 128
-          description: Stable per-device token for trusted device memory.
-
-    MfaVerifyRequest:
-      type: object
-      required:
-        - email
-        - password
-        - mfaChallengeId
-      properties:
-        email:
-          type: string
-          format: email
-        password:
-          type: string
-        mfaCode:
-          type: string
-          pattern: '^\d{6}$'
-        mfaRecoveryCode:
-          type: string
-          pattern: '^[A-Z0-9]{10}$'
-        mfaChallengeId:
-          type: string
-
-    LoginResponse:
-      type: object
-      required:
-        - user
-        - token
-        - expiresAt
-      properties:
-        user:
-          $ref: '#/components/schemas/User'
-        token:
-          type: string
           description: |
-            Bearer token for subsequent authenticated requests.
-            Empty string when `mfaRequired: true` (Phase 1 pending MFA).
-        expiresAt:
-          type: string
-          format: date-time
-          description: Token expiration timestamp (ISO 8601 UTC)
-        refreshToken:
-          type: string
-          description: Opaque refresh token for obtaining new access tokens without re-authentication.
-        mfaRequired:
-          type: boolean
-          description: |
-            `true` when MFA is enabled and Phase 1 completed successfully.
-            Client should resubmit with `mfaCode` or `mfaRecoveryCode`.
-        mfaChallengeId:
-          type: string
-          description: |
-            Opaque challenge ID for Phase 2. Echo this back when submitting
-            the MFA code. Single-use and expires in 5 minutes.
-        mfaChallengeTtlSeconds:
-          type: integer
-          description: Seconds until the MFA challenge expires.
-
-    User:
-      type: object
-      required:
-        - id
-        - email
-        - role
-        - active
-        - createdAt
-        - updatedAt
-      properties:
-        id:
-          type: string
-          format: uuid
-        email:
-          type: string
-          format: email
-        displayName:
-          type: string
-          nullable: true
-        role:
-          $ref: '#/components/schemas/UserRole'
-        active:
-          type: boolean
-        createdAt:
-          type: string
-          format: date-time
-        updatedAt:
-          type: string
-          format: date-time
-
-    UserRole:
-      type: string
-      enum:
-        - admin
-        - operator
-        - viewer
-
-    AuditAction:
-      type: string
-      description: |
-        Discriminant of an audit-trail entry. Families: `auth.login.*`,
-        `auth.mfa.*`, `source.policy_updated`, `crawl.triggered`.
-      enum:
-        - auth.login.success
-        - auth.login.failed
-        - auth.mfa.enrollment_started
-        - auth.mfa.enabled
-        - auth.mfa.recovery_code_used
-        - source.policy_updated
-        - crawl.triggered
+            Optional client identifier for fraud detection or session binding.
 
     AuditLogEntry:
       type: object
@@ -665,58 +222,14 @@ components:
         - action
         - metadata
       properties:
-        id:
-          type: string
-          format: uuid
-        at:
-          type: string
-          format: date-time
-        actorUserId:
-          type: string
-          format: uuid
-          nullable: true
-          description: Authenticated actor; null for pre-auth events (failed logins).
-        actorEmail:
-          type: string
-          format: email
-          nullable: true
-          description: Email snapshot — preserved when accounts are later removed.
-        action:
-          $ref: '#/components/schemas/AuditAction'
-        targetType:
-          type: string
-          nullable: true
-          description: Kind of the targeted resource (e.g. `user`, `source`).
-        targetId:
-          type: string
-          nullable: true
         metadata:
           type: object
-          description: Action-specific detail (changed fields, url counts) — never secrets.
           additionalProperties: true
-
-    AuditLogPage:
-      type: object
-      required:
-        - items
-        - page
-        - pageSize
-        - total
-      properties:
-        items:
-          type: array
-          items:
-            $ref: '#/components/schemas/AuditLogEntry'
-        page:
-          type: integer
-          minimum: 1
-        pageSize:
-          type: integer
-          minimum: 1
-        total:
-          type: integer
-          minimum: 0
-          description: Total entries matching the filter across all pages.
+          description: |
+            Action-specific metadata. Secrets and credentials must never be included.
+            Common fields may include:
+              - ip: string (client IP address)
+              - userAgent: string (browser or client identifier)
 
     ApiError:
       type: object
@@ -727,27 +240,24 @@ components:
           type: object
           required:
             - message
+            - code
           properties:
             message:
               type: string
-              description: Human-readable error description
             code:
               type: string
               description: |
-                Machine-readable error code. Possible values:
-
-                | Code | HTTP Status | Description |
-                |------|-------------|-------------|
-                | `INVALID_CREDENTIALS` | 401 | Wrong email or password |
-                | `UNAUTHENTICATED` | 401 | Missing or invalid bearer token |
-                | `FORBIDDEN` | 403 | Insufficient permissions |
-                | `NOT_FOUND` | 404 | Resource not found |
-                | `VALIDATION_ERROR` | 400 | Request body failed validation |
-                | `RATE_LIMITED` | 429 | Too many requests |
-                | `MFA_CHALLENGE_REQUIRED` | 400 | MFA code submitted without challenge ID |
-                | `INVALID_MFA_CHALLENGE` | 401 | Challenge expired or already consumed |
-                | `INVALID_MFA_CODE` | 401 | Wrong TOTP or recovery code |
-                | `MFA_NOT_ENABLED` | 400 | MFA verification requested but user has no MFA |
-                | `MFA_NOT_CONFIGURED` | 500 | User has MFA enabled but no secret on file |
-                | `MFA_NOT_ENROLLED` | 400 | Confirm called before enrollment started |
-                | `MFA_ALREADY_ENABLED` | 409 | Enroll/confirm called but MFA is already active |
+                Machine-readable error code.
+                INVALID_CREDENTIALS: Wrong email or password.
+                UNAUTHENTICATED: Missing or invalid bearer token.
+                FORBIDDEN: Insufficient permissions.
+                NOT_FOUND: Resource not found.
+                VALIDATION_ERROR: Request validation failed.
+                RATE_LIMITED: Too many requests.
+                MFA_CHALLENGE_REQUIRED: MFA code submitted without challenge ID.
+                INVALID_MFA_CHALLENGE: Challenge expired or consumed.
+                INVALID_MFA_CODE: Wrong TOTP or recovery code.
+                MFA_NOT_ENABLED: MFA verification requested but MFA is disabled.
+                MFA_NOT_CONFIGURED: Required MFA encryption configuration is missing.
+                MFA_NOT_ENROLLED: Confirmation attempted without pending enrollment.
+                MFA_ALREADY_ENABLED: MFA is already active.

@@ -18,8 +18,8 @@ declare module 'fastify' {
 /** Returns a fixed development user when AUTH_BYPASS is enabled. */
 function developmentUser(): User {
   return {
-    id: 'development-user',
-    email: 'admin@cre.local',
+    id: 'usr-6',
+    email: 'operator@cre.test',
     role: 'admin' as UserRole,
   };
 }
@@ -32,6 +32,11 @@ export function bearerTokenOf(request: FastifyRequest): string | null {
   if (!header || !header.startsWith(BEARER_PREFIX)) return null;
   const token = header.slice(BEARER_PREFIX.length).trim();
   return token === '' ? null : token;
+}
+
+/** Decorates requests so handlers can read `request.user` (set by the guards). */
+export function decorateRequestUser(app: FastifyInstance): void {
+  app.decorateRequest('user', null);
 }
 
 export interface AuthGuards {
@@ -57,21 +62,27 @@ export function createAuthGuards(
 ): AuthGuards {
   const clock = now ?? ((): Date => new Date());
   const isBypass = authBypass && nodeEnv === 'development';
-
-  async function resolveUser(request: FastifyRequest): Promise<User | null> {
-    if (isBypass) return developmentUser();
+async function resolveUser(request: FastifyRequest): Promise<User | null> {
+    if (isBypass) {
+      const user = developmentUser();
+      request.user = user;
+      return user;
+    }
     const token = bearerTokenOf(request);
-    if (!token) return null;
+    if (!token) {
+      request.user = null;
+      return null;
+    }
     const session = await sessions.findActive(hashToken(token), clock());
-    return session ? toUserDto(session.user) : null;
+    const user = session ? toUserDto(session.user) : null;
+    request.user = user;
+    return user;
   }
-
   async function requireAuth(request: FastifyRequest): Promise<void> {
     const user = await resolveUser(request);
     if (!user) {
       throw new ApiError(401, 'UNAUTHENTICATED', 'authentication required');
     }
-    request.user = user;
   }
 
   function requireRole(...roles: UserRole[]): (request: FastifyRequest) => Promise<void> {
@@ -88,9 +99,4 @@ export function createAuthGuards(
   }
 
   return { requireAuth, requireRole };
-}
-
-/** Decorates requests so handlers can read `request.user` (set by the guards). */
-export function decorateRequestUser(app: FastifyInstance): void {
-  app.decorateRequest('user', null);
 }

@@ -1,27 +1,40 @@
 'use client';
 
-/**
- * Login page.
- *
- * Presents an email/password form. On success, the auth context stores the
- * bearer token and resolves the current user; we redirect to /dashboard.
- * If already authenticated, redirect immediately.
- *
- * When the server requires MFA, a second step is shown where the user
- * enters their TOTP code from their authenticator app.
- */
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState, type FormEvent } from 'react';
-
-import { ApiError } from '@/lib/api';
-import type { LoginRequest } from '@cre/shared';
-import { useAuth } from '@/lib/auth/auth-context';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Spinner } from '@/components/ui/spinner';
+import { authBypassEnabled } from '@/lib/auth-bypass';
 
 export default function LoginPage() {
   const router = useRouter();
+
+  useEffect(() => {
+    if (authBypassEnabled) {
+      router.replace('/dashboard');
+    }
+  }, [router]);
+
+  if (authBypassEnabled) {
+    return null;
+  }
+
+  /**
+   * Login page.
+   *
+   * Presents an email/password form. On success, the auth context stores the
+   * bearer token and resolves the current user; we redirect to /dashboard.
+   * If already authenticated, redirect immediately.
+   *
+   * When the server requires MFA, a second step is shown where the user
+   * enters their TOTP code from their authenticator app.
+   */
+  import { useState, type FormEvent } from 'react';
+  import { ApiError } from '@/lib/api';
+  import type { LoginRequest } from '@cre/shared';
+  import { useAuth } from '@/lib/auth/auth-context';
+  import { Button } from '@/components/ui/button';
+  import { Input } from '@/components/ui/input';
+  import { Spinner } from '@/components/ui/spinner';
+
   const { user, login, loading: authLoading, mfaChallenge, clearMfaChallenge } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -30,10 +43,10 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    if (!authLoading && user) {
+    if (user) {
       router.replace('/dashboard');
     }
-  }, [authLoading, user, router]);
+  }, [user, router]);
 
   if (authLoading) {
     return (

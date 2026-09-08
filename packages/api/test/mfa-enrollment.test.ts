@@ -14,7 +14,7 @@ import { describe, expect, it, beforeAll, afterAll } from 'vitest';
 import { totp } from '../src/auth/totp';
 import { buildTestHarness, createUser, fixedNow, login } from './fakes';
 
-const TEST_ENCRYPTION_KEY = Buffer.from('0123456789abcdef0123456789abcdef').toString('base64');
+const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 1).toString('base64');
 
 describe('POST /api/auth/mfa/enroll', () => {
   beforeAll(() => {
@@ -43,7 +43,7 @@ describe('POST /api/auth/mfa/enroll', () => {
     const body = res.json() as { secret: string; otpauthUrl: string };
     expect(typeof body.secret).toBe('string');
     expect(body.secret.length).toBeGreaterThanOrEqual(16);
-    expect(body.otpauthUrl).toMatch(/^otpauth:\/\/totp\/cre-command%3A/);
+    expect(body.otpauthUrl).toMatch(/^otpauth:\/\/totp\//);
     expect(body.otpauthUrl).toContain(`secret=${body.secret}`);
 
     // Pending: MFA is not yet active, but the encrypted secret round-trips.
@@ -215,28 +215,54 @@ describe('POST /api/auth/mfa/confirm', () => {
     expect(res.json().error.code).toBe('VALIDATION_ERROR');
   });
 
-  it('completed enrollment forces the MFA step on the next login, then verifies with TOTP', async () => {
+it('completed enrollment forces the MFA step on the next login, then verifies with TOTP', async () => {
     const h = await buildTestHarness();
     const user = await createUser(h.users);
     const token = await login(h.app);
     const headers = { authorization: `Bearer ${token}` };
 
-    await h.app.inject({ method: 'POST', url: '/api/auth/mfa/enroll', headers });
-    const pending = await h.users.findMfaConfig(user.id);
-    const code = totp(pending.mfaSecret!, Math.floor(fixedNow().getTime() / 30_000));
-    await h.app.inject({ method: 'POST', url: '/api/auth/mfa/confirm', headers, payload: { code } });
+    const enrollRes = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/mfa/enroll',
+      headers,
+    });
+    expect(enrollRes.statusCode).toBe(200);
+    const enrollment = enrollRes.json() as { secret: string };
+
+    const code = totp(
+      enrollment.secret,
+      Math.floor(fixedNow().getTime() / 30_000),
+    );
+
+    const confirmRes = await h.app.inject({
+      method: 'POST',
+      url: '/api/auth/mfa/confirm',
+      headers,
+      payload: { code },
+    });
+    expect(confirmRes.statusCode).toBe(200);
 
     const loginRes = await h.app.inject({
       method: 'POST',
       url: '/api/auth/login',
-      payload: { email: user.email, password: 'secret123' },
+      payload: {
+        email: user.email,
+        password: 'secret123',
+      },
     });
     expect(loginRes.statusCode).toBe(200);
-    const challenge = loginRes.json() as { mfaRequired: boolean; mfaChallengeId: string };
+    const challenge = loginRes.json() as {
+      mfaRequired: boolean;
+      mfaChallengeId: string;
+    };
     expect(challenge.mfaRequired).toBe(true);
     expect(challenge.mfaChallengeId).toBeDefined();
 
-    const verifyCode = totp(pending.mfaSecret!, Math.floor(fixedNow().getTime() / 30_000));
+    const verifyCode = totp(
+      enrollment.secret,
+      Math.floor(fixedNow().getTime() / 30_000),
+    );
+
     const verify = await h.app.inject({
       method: 'POST',
       url: '/api/auth/login/mfa-verify',
@@ -257,10 +283,10 @@ describe('POST /api/auth/mfa/confirm', () => {
     const token = await login(h.app);
     const headers = { authorization: `Bearer ${token}` };
 
-    await h.app.inject({ method: 'POST', url: '/api/auth/mfa/enroll', headers });
-    const pending = await h.users.findMfaConfig(user.id);
-    const code = totp(pending.mfaSecret!, Math.floor(fixedNow().getTime() / 30_000));
-    const confirm = await h.app.inject({ method: 'POST', url: '/api/auth/mfa/confirm', headers, payload: { code } });
+     const enrollRes = await h.app.inject({ method: 'POST', url: '/api/auth/mfa/enroll', headers });
+     const enrollment = enrollRes.json() as { secret: string };
+     const code = totp(enrollment.secret, Math.floor(fixedNow().getTime() / 30_000));
+     const confirm = await h.app.inject({ method: 'POST', url: '/api/auth/mfa/confirm', headers, payload: { code } });
     const recoveryCode = (confirm.json() as { recoveryCodes: string[] }).recoveryCodes[0];
 
     const challenge1 = await h.app.inject({

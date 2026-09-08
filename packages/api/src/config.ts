@@ -151,6 +151,18 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     );
   }
 
+  const authBypass = booleanFlag(
+      env['AUTH_BYPASS'],
+      false,
+      'AUTH_BYPASS',
+    );
+
+  if (authBypass && nodeEnvRaw !== 'development') {
+    throw new Error(
+      'AUTH_BYPASS may only be enabled when NODE_ENV=development',
+    );
+  }
+
   return {
     port: positiveInt(env['PORT'], 4000, 'PORT'),
     host: env['HOST']?.trim() || '0.0.0.0',

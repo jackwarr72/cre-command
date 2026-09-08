@@ -1,17 +1,5 @@
 'use client';
 
-/**
- * Auth context for the control panel.
- *
- * Manages:
- *   - token persistence in localStorage (read once on mount, written on login/logout)
- *   - current-user resolution via SWR + GET /api/auth/me
- *   - login/logout mutations with token lifecycle
- *   - MFA challenge state for two-step login flow
- *
- * The provider is mounted at the root layout; the `(app)` group layout
- * consumes `useAuth()` to gate access and redirect unauthenticated users.
- */
 import { useRouter } from 'next/navigation';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import useSWR, { useSWRConfig } from 'swr';
@@ -19,6 +7,7 @@ import useSWR, { useSWRConfig } from 'swr';
 import { authApi } from '@/lib/api';
 import { clearToken, getToken, setToken } from '@/lib/auth/token-store';
 import type { LoginRequest, LoginResponse, User } from '@cre/shared';
+import { authBypassEnabled } from '../auth-bypass';
 
 export interface MfaChallenge {
   challengeId: string;
@@ -64,7 +53,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     isValidating,
     error,
   } = useSWR<User>(
-    token ? ['/api/auth/me'] : null,
+    (token || authBypassEnabled) ? ['/api/auth/me'] : null,
     () => authApi.getCurrentUser(),
     {
       revalidateOnFocus: true,
@@ -122,3 +111,4 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     </AuthContext.Provider>
   );
 }
+

@@ -149,6 +149,28 @@ class FakeCrawlRuns implements CrawlRunRepository {
     this.created.push({ sourceId, startedAt });
     return runId;
   }
+  async createQueued(input: {
+    sourceId: string;
+    requestedAt: Date;
+    requestedByUserId: string | null;
+    urls: readonly string[];
+  }): Promise<string> {
+    const runId = `run-${++this.seq}`;
+    this.created.push({ sourceId: input.sourceId, startedAt: input.requestedAt });
+    return runId;
+  }
+  async claimForExecution(
+    _runId: string,
+    _workerId: string,
+    _startedAt: Date,
+  ): Promise<
+    | { status: 'claimed' }
+    | { status: 'already_running' }
+    | { status: 'already_terminal' }
+    | { status: 'not_found' }
+  > {
+    return { status: 'claimed' };
+  }
   async finish(runId: string, accounting: CrawlRunAccounting): Promise<void> {
     this.finished.push({ runId, accounting });
   }
