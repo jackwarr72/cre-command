@@ -39,16 +39,29 @@ $env:CRE_ADMIN_PASSWORD = 'change-me'
 
 npm run dev          # web (3000) + api (4000) together
 npm run typecheck    # all 7 projects, strict
-npm test             # vitest suites
+npm run test:unit    # vitest suites that need no services
+npm run test:integration
+                     # live Postgres/Redis suites (skipped unless
+                     # DATABASE_URL / REDIS_URL are set)
 npm run build:web    # production web build
 ```
+
+## CI
+
+`.github/workflows/ci.yml` runs on every PR and push to `master`:
+`npm ci` → typecheck → unit tests → Postgres 16 + Redis 7 service
+containers → migrations on a fresh database → integration tests
+(`CRE_ENFORCE_INTEGRATION=1` makes missing services **fail** the job instead
+of skipping) → Next.js production build. npm dependencies are cached via
+`actions/setup-node`.
 
 Then open **http://localhost:3000** and sign in with the bootstrap credentials.
 
 ## Verification status
 
-- `npm run typecheck` — clean across `shared`, `db`, `adapters`, `crawler`, `api`, `workers`, `web`.
-- `npm test` — **125 passed** (8 skipped: live-Postgres integration).
+- `npm run typecheck` — clean across `shared`, `db`, `adapters`, `crawler`, `api`, `workers`, `web`, plus the root project that covers `test-support/` and the vitest configs (8 strict passes, tests included).
+- `npm run test:unit` — **254 passed** (19 files, no services required).
+- `npm run test:integration` — live PostgreSQL/Redis suites; run via CI (service containers + fresh migrations) or locally with `DATABASE_URL` / `REDIS_URL` set. CI enforces them via `CRE_ENFORCE_INTEGRATION=1` so they can never silently skip.
 - `npm run build:web` — production build.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full architecture, API spec, crawler pipeline, and roadmap.

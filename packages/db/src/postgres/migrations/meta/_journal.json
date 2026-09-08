@@ -36,6 +36,20 @@
       "when": 1725306750000,
       "tag": "0004_fuzzy_nimrod",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1788810242533,
+      "tag": "0005_new_nightcrawler",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1788812492424,
+      "tag": "0006_lying_pretty_boy",
+      "breakpoints": true
     }
   ]
 }

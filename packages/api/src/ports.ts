@@ -1,6 +1,8 @@
 import type { CrawlOutcome } from '@cre/crawler';
 import type { CrawlRunRow, SourceRow, UserRow } from '@cre/db';
 import type {
+  AuditAction,
+  AuditLogEntry,
   CrawlRun,
   CrawlRunWithMetrics,
   CrawlRunStatus,
@@ -60,6 +62,22 @@ export interface UserRepo {
    * Called by the auth flow when a recovery code is successfully used.
    */
   updateMfaRecoveryCodes(userId: string, remainingCodes: string[]): Promise<void>;
+  /**
+   * Persists the encrypted TOTP secret for a pending (unconfirmed) enrollment.
+   * MFA stays disabled until `activateMfa` is called with a verified code.
+   */
+  saveMfaEnrollmentSecret(
+    userId: string,
+    input: EncryptedMfaSecret,
+    now: Date,
+  ): Promise<void>;
+  /**
+   * Atomically activates MFA for a user: flips `mfaEnabled` on, stores the
+   * encrypted secret, the bcrypt-hashed recovery codes, and the verification
+   * timestamp. Called only after the TOTP code has been verified against the
+   * pending enrollment secret.
+   */
+  activateMfa(userId: string, input: ActivateMfaInput, now: Date): Promise<void>;
 }
 
 export interface SessionRepo {
@@ -100,6 +118,22 @@ export interface UserMfaConfig {
    * An empty array means no recovery codes are available.
    */
   mfaRecoveryCodes?: string[];
+  /** When MFA was last successfully verified (enrollment completion, wall clock. */
+  mfaVerifiedAt?: Date;
+}
+
+/** Persistable result of encrypting a TOTP secret at rest. */
+export interface EncryptedMfaSecret {
+  mfaSecretEncrypted: string;
+  mfaSecretIv: string;
+}
+
+/** Persisted fields fora completed (activated) MFA enrollment. */
+export interface ActivateMfaInput extends EncryptedMfaSecret {
+  /** bcrypt-hashed one-time recovery codes to store on the user row. */
+  hashedRecoveryCodes: string[];
+  /** Verification instant used asthe enrollment/completion timestamp. */
+  mfaVerifiedAt: Date;
 }
 
 export interface ListingQueryRepo {
@@ -122,6 +156,15 @@ export interface CrawlRunQueryRepo {
   findById(id: string): Promise<CrawlRunWithMetrics | null>;
   /** Returns the most recent N crawl runs for a source (newest first). */
   recentForSource(sourceKey: string, limit: number): Promise<CrawlRunWithMetrics[]>;
+  /** Create a new crawl run with status 'running'. Returns the run ID. */
+  create(sourceId: string, startedAt: Date): Promise<string>;
+  /** Create a queued crawl run with URLs stored for worker execution. */
+  createQueued(input: {
+    sourceId: string;
+    requestedAt: Date;
+    requestedByUserId: string | null;
+    urls: readonly string[];
+  }): Promise<string>;
 }
 
 export interface SourceHealthRepo {
@@ -133,6 +176,60 @@ export interface SourceHealthRepo {
 export interface CrawlTrigger {
   hasAdapter(sourceKey: string): boolean;
   trigger(source: SourceRow, urls: readonly string[]): Promise<CrawlOutcome>;
+}
+
+// ── Audit trail ───────────────────────────────────────────────────
+
+/** One auditable action. Extend the shared `AuditAction` union as needed. */
+export interface AuditEvent {
+  action: AuditAction;
+  at: Date;
+  actorUserId?: string | null;
+  actorEmail?: string | null;
+  targetType?: string | null;
+  targetId?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AuditLogFilter {
+  action?: AuditAction;
+  actorUserId?: string;
+  from?: Date;
+  to?: Date;
+}
+
+/**
+ * Append-only audit trail backed by the `audit_log` table. Callers must treat
+ * `append` failures as non-fatal (log them) so auditing can never break the
+ * operation it is recording.
+ */
+export interface AuditRepo {
+  append(event: AuditEvent): Promise<void>;
+  list(filter: AuditLogFilter, page: number, pageSize: number): Promise<Paged<AuditLogEntry>>;
+}
+
+/** Transactional outbox for job queuing. When a crawl run is triggered, an outbox
+ * record is written in the same transaction as the crawl run. A background worker
+ * polls this table and publishes jobs to the queue. If the worker crashes, records
+ * remain and are retried — guaranteeing: a persisted queued crawl run will
+ * eventually have a corresponding queue job, or is visibly recoverable as an
+ * unpublished outbox record.
+ */
+export interface OutboxRepo {
+  /** Create an outbox record with the given type and optional correlation ID. */
+  create(type: string, payload: Record<string, unknown>, correlationId?: string): Promise<string>;
+  /** Fetch pending records ready for processing. */
+  popBatch(limit: number): Promise<Array<{ id: string; type: string; payload: Record<string, unknown>; correlationId?: string }>>;
+  /** Mark an outbox record as processing. */
+  markProcessing(id: string): Promise<void>;
+  /** Record successful completion of an outbox job. */
+  complete(id: string): Promise<void>;
+  /** Record a permanent failure, keeping the record for manual inspection. */
+  fail(id: string, error: string): Promise<void>;
+  /** Retry a failed outbox record (increment attempt count). */
+  retry(id: string): Promise<void>;
+  /** Delete fully processed or expired outbox records. */
+  cleanup(): Promise<number>;
 }
 
 /**
@@ -169,6 +266,11 @@ export interface AppDeps {
   crawlRuns: CrawlRunQueryRepo;
   health: SourceHealthRepo;
   crawl: CrawlTrigger;
+  /** Append-only audit trail for security/policy actions. */
+  audit: AuditRepo;
+  /** Transactional outbox for job queuing — crawl triggers, CSV exports,
+   *  scheduled crawls, notifications, CRM sync, SLA checks. */
+  outbox: OutboxRepo;
   /** Bearer session lifetime in hours. Default 168 (7 days). */
   sessionTtlHours?: number;
   /** MFA challenge TTL in milliseconds. Default 300000 (5 minutes). */

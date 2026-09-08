@@ -197,6 +197,3 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     ),
   };
 }
-
-/** The raw MFA encryption key, loaded lazily at runtime. Throws if not set when needed. */
-export const MFA_ENCRYPTION_KEY = process.env['MFA_ENCRYPTION_KEY']?.trim() || undefined;

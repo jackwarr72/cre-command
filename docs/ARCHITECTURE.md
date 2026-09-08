@@ -138,9 +138,12 @@ Errors: `{ "error": { "message", "code?" } }`.
 
 | Method | Path | Auth | Notes |
 |---|---|---|---|
-| POST | /auth/login | — | `{email,password}` → `{user,token,expiresAt}` |
+| POST | /auth/login | — | `{email,password}` → `{user,token,expiresAt}`; when MFA is on: `{mfaRequired,mfaChallengeId}` instead |
+| POST | /auth/login/mfa-verify | — | `{email,password,mfaChallengeId,mfaCode\|mfaRecoveryCode}` → completes the login |
 | GET | /auth/me | user | current session user |
 | POST | /auth/logout | user | revokes session |
+| POST | /auth/mfa/enroll | user | → `{secret,otpauthUrl}`; stores an encrypted pending secret |
+| POST | /auth/mfa/confirm | user | `{code}` → activates MFA, returns 10 single-use recovery codes once |
 | GET | /health | — | liveness |
 | GET | /sources | user | list with policy fields |
 | PATCH | /sources/:key | operator/admin | `enabled, crawlAllowed, robotsPolicy, rateLimitMs, maxWorkers` |
@@ -148,6 +151,7 @@ Errors: `{ "error": { "message", "code?" } }`.
 | POST | /crawl-runs | operator/admin | `{sourceKey, urls?}` → run record (404/400 NO_ADAPTER/NO_URLS) |
 | GET | /listings | user | filters: `q, propertyTypes, listingTypes, statuses, sourceKeys, states, cities, minPrice, maxPrice, updatedSince` (CSV arrays), `page,pageSize` |
 | GET | /listings/:id | user | detail |
+| GET | /audit-log | operator/admin | append-only trail; filters `action, actorUserId, from, to`, newest first |
 
 Validation is zod-first: unknown enum values are 400s, never silently dropped.
 
@@ -174,6 +178,15 @@ and placeholder-backed CRM/ops routes ready for Phase 4–5 buildout.
 
 - bcrypt password hashes; opaque session tokens stored only as SHA-256.
 - Role guards: `requireAuth` / `requireRole('operator','admin')` per route.
+- TOTP multi-factor authentication: base32 secrets encrypted at rest
+  (AES-256-GCM, key via `MFA_ENCRYPTION_KEY`), single-use login challenges
+  (Redis- or memory-backed, short TTL), 10 bcrypt-hashed single-use recovery
+  codes provisioned at confirmation.
+- Append-only audit trail (`audit_log`): login success/failure, MFA
+  enrollment/confirmation, source policy changes, and manual crawl triggers
+  are recorded with actor, target, and non-secret metadata. Exposed only
+  through a read/filter endpoint (`GET /audit-log`, operator+) — no update or
+  delete path exists.
 - Zod validation on every body/query; parameterized queries via Drizzle.
 - Crawler compliance: explicit config gate (fail closed), robots.txt honored
   per policy, per-source rate limits, bounded requests, honest UA, no
@@ -184,7 +197,14 @@ and placeholder-backed CRM/ops routes ready for Phase 4–5 buildout.
 
 - Unit/integration tests (Vitest) for crawler pipeline, adapters, API routes
   with in-memory fakes (`packages/api/test/fakes.ts`).
-- `npm run typecheck` — all 7 projects strict-clean.
+- `npm run test:unit` — 254 tests, no services required.
+- `npm run test:integration` — live PostgreSQL/Redis suites that self-apply
+  migrations to disposable databases. Locally they skip unless
+  `DATABASE_URL`/`REDIS_URL` are set; CI provisions both as service
+  containers and runs them under `CRE_ENFORCE_INTEGRATION=1`, where a missing
+  or unreachable service fails the job instead of skipping.
+- `npm run typecheck` — all workspaces **plus tests and test support** strict
+  clean (8 `tsc` passes; vitest does not typecheck, so the gate does).
 - External sources are never hit in tests; fixtures only.
 
 ## 11. Roadmap
@@ -193,8 +213,9 @@ and placeholder-backed CRM/ops routes ready for Phase 4–5 buildout.
 - **Phase 2 (done):** sources + policy, crawl runs, engine, adapters,
   normalization, fingerprint dedup.
 - **Phase 3 (done):** listings DB, filters, detail views, run history.
-- **Phase 4 (next):** metrics, audit log, manual capture, contacts CRUD,
-  assignment, tasks, SLA monitor (<24h).
+- **Phase 4 (in progress):** TOTP MFA (done), audit log + viewer UI (done);
+  next: metrics dashboard UI, manual capture, contacts CRUD, assignment,
+  tasks, SLA monitor (<24h).
 - **Phase 5:** calendar, funnel, opportunities, notifications.
 - **Phase 6:** worker split (packages/workers + queue), CSV export jobs,
   observability, load tests (100+ sources), deployment automation.

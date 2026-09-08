@@ -16,7 +16,9 @@
     "start:web": "npm run start -w apps/web",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/db --noEmit && tsc -p packages/adapters --noEmit && tsc -p packages/crawler --noEmit && tsc -p packages/api --noEmit && tsc -p packages/workers --noEmit && tsc -p apps/web --noEmit",
+    "test:unit": "vitest run --config vitest.unit.config.ts && npm run test -w apps/web",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "typecheck": "tsc -p packages/shared --noEmit && tsc -p packages/db --noEmit && tsc -p packages/adapters --noEmit && tsc -p packages/crawler --noEmit && tsc -p packages/api --noEmit && tsc -p packages/workers --noEmit && tsc -p apps/web --noEmit && tsc -p tsconfig.json --noEmit",
     "build:web": "npm run build -w apps/web"
   },
   "devDependencies": {

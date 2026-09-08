@@ -1,7 +1,9 @@
 import type { CrawlOutcome } from '@cre/crawler';
-import type { CrawlRunRow, ListingRow, SourceRow, UserRow } from '@cre/db';
+import type { AuditLogRow, CrawlRunRow, ListingRow, SourceRow, UserRow } from '@cre/db';
 import type {
+  AuditLogEntry,
   CrawlRun,
+  CrawlRunMetrics,
   CrawlRunWithMetrics,
   CrawlRunStatus,
   Listing,
@@ -11,9 +13,13 @@ import type {
 import type { FastifyInstance } from 'fastify';
 
 import { hashPassword } from '../src/auth/passwords';
+import { decryptMfaSecret } from '../src/auth/mfa-crypto';
 import { buildApp } from '../src/app';
 import type {
   AppDeps,
+  AuditEvent,
+  AuditLogFilter,
+  AuditRepo,
   CrawlRunQueryRepo,
   CrawlTrigger,
   ListingQueryRepo,
@@ -25,7 +31,7 @@ import type {
   UserMfaConfig,
   UserRepo,
 } from '../src/ports';
-import { toCrawlRunDto, toListingDto } from '../src/serializers';
+import { toAuditLogDto, toCrawlRunDto, toListingDto } from '../src/serializers';
 
 // ── Clock + fixtures ─────────────────────────────────────────────
 
@@ -43,6 +49,12 @@ export function makeUserRow(overrides: Partial<UserRow> = {}): UserRow {
     role: 'viewer',
     passwordHash: 'not-a-real-hash',
     active: true,
+    // MFA columns are NOT NULL in the schema; defaults mirror migration 0002.
+    mfaEnabled: false,
+    mfaSecretEncrypted: null,
+    mfaSecretIv: null,
+    mfaRecoveryCodes: '[]',
+    mfaVerifiedAt: null,
     createdAt: FIXED_NOW,
     updatedAt: FIXED_NOW,
     ...overrides,
@@ -107,8 +119,54 @@ export function makeListingRow(overrides: Partial<ListingRow> = {}): ListingRow 
   };
 }
 
-export function makeCrawlRunRow(overrides: Partial<CrawlRunRow> = {}): CrawlRunRow {
+/**
+ * Zeroed CrawlRunMetrics with the same counter derivation `toCrawlRunDto`
+ * uses for rows persisted before structured metrics existed.
+ */
+function defaultCrawlRunMetrics(
+  row: Pick<
+    CrawlRunRow,
+    'id' | 'status' | 'listingsFound' | 'listingsAdded' | 'listingsUpdated' | 'errors'
+  >,
+): CrawlRunMetrics {
   return {
+    runId: row.id,
+    status: row.status,
+    pagesAttempted: 0,
+    pagesSucceeded: 0,
+    pagesFailed: 0,
+    listingsDiscovered: row.listingsFound,
+    listingsAccepted: row.listingsFound,
+    listingsRejected: 0,
+    duplicateCandidates: 0,
+    listingsCreated: row.listingsAdded,
+    listingsUpdated: row.listingsUpdated,
+    listingsUnchanged: 0,
+    parseErrors: 0,
+    httpErrors: 0,
+    robotsDenials: 0,
+    retryCount: 0,
+    httpStatusCounts: {},
+    requestCount: 0,
+    totalLatencyMs: 0,
+    maxLatencyMs: 0,
+    latencySamplesMs: [],
+    bytesDownloaded: 0,
+    cardsSeen: 0,
+    cardsParsed: 0,
+    cardsRejected: 0,
+    candidatesWithTitle: 0,
+    candidatesWithPrice: 0,
+    candidatesWithAddress: 0,
+    candidatesWithSize: 0,
+    candidatesWithPropertyType: 0,
+    observationsInserted: 0,
+    errors: row.errors,
+  };
+}
+
+export function makeCrawlRunRow(overrides: Partial<CrawlRunRow> = {}): CrawlRunRow {
+  const row: CrawlRunRow = {
     id: nextId('run'),
     sourceId: 'src-1',
     status: 'completed',
@@ -119,19 +177,39 @@ export function makeCrawlRunRow(overrides: Partial<CrawlRunRow> = {}): CrawlRunR
     listingsUpdated: 0,
     errors: [],
     createdAt: FIXED_NOW,
+    metrics: defaultCrawlRunMetrics({
+      id: '',
+      status: 'completed',
+      listingsFound: 0,
+      listingsAdded: 0,
+      listingsUpdated: 0,
+      errors: [],
+    }),
     ...overrides,
   };
+  // Unless metrics were replaced wholesale, keep the derived counters in sync
+  // with the final row values (matches what the crawler persists).
+  if (!overrides.metrics) {
+    row.metrics = defaultCrawlRunMetrics(row);
+  }
+  return row;
 }
 
 // ── In-memory repositories ───────────────────────────────────────
 
+/** Internal MFA record: the shared config plus at-rest encrypted fields. */
+interface FakeMfaRecord extends UserMfaConfig {
+  mfaSecretEncrypted?: string;
+  mfaSecretIv?: string;
+}
+
 export class FakeUserRepo implements UserRepo {
   readonly rows: UserRow[] = [];
   /** Per-user MFA configuration. Keyed by user id. */
-  readonly mfaByUserId = new Map<string, UserMfaConfig>();
+  readonly mfaByUserId = new Map<string, FakeMfaRecord>();
 
   setMfa(userId: string, config: UserMfaConfig): void {
-    this.mfaByUserId.set(userId, config);
+    this.mfaByUserId.set(userId, { ...config });
   }
 
   async count(): Promise<number> {
@@ -143,15 +221,54 @@ export class FakeUserRepo implements UserRepo {
   }
 
   async findMfaConfig(userId: string): Promise<UserMfaConfig> {
-    return this.mfaByUserId.get(userId) ?? { mfaEnabled: false };
+    const record = this.mfaByUserId.get(userId);
+    if (!record) return { mfaEnabled: false };
+    // Pending enrollments persist only the encrypted secret; decrypt on read like
+    // the Postgres repo so both paths behave identically for the routes.
+    if (record.mfaSecretEncrypted && record.mfaSecretIv && !record.mfaSecret) {
+      return {
+        ...record,
+        mfaSecret: decryptMfaSecret(record.mfaSecretEncrypted, record.mfaSecretIv),
+      };
+    }
+    return record;
   }
 
   async updateMfaRecoveryCodes(userId: string, remainingCodes: string[]): Promise<void> {
     const config = this.mfaByUserId.get(userId);
     if (config) {
-      config.mfaRecoveryCodes = remainingCodes;
+      config.mfaRecoveryCodes = [...remainingCodes];
       this.mfaByUserId.set(userId, config);
     }
+  }
+
+  async saveMfaEnrollmentSecret(
+    userId: string,
+    input: { mfaSecretEncrypted: string; mfaSecretIv: string },
+    _now: Date,
+  ): Promise<void> {
+    const record = this.mfaByUserId.get(userId) ?? { mfaEnabled: false };
+    record.mfaSecretEncrypted = input.mfaSecretEncrypted;
+    record.mfaSecretIv = input.mfaSecretIv;
+    this.mfaByUserId.set(userId, record);
+  }
+
+  async activateMfa(
+    userId: string,
+    input: {
+      mfaSecretEncrypted: string;
+      mfaSecretIv: string;
+      hashedRecoveryCodes: string[];
+      mfaVerifiedAt: Date;
+    },
+    _now: Date,
+  ): Promise<void> {
+    const record = this.mfaByUserId.get(userId) ?? { mfaEnabled: false };
+    record.mfaEnabled = true;
+    record.mfaSecret = decryptMfaSecret(input.mfaSecretEncrypted, input.mfaSecretIv);
+    record.mfaRecoveryCodes = [...input.hashedRecoveryCodes];
+    record.mfaVerifiedAt = input.mfaVerifiedAt;
+    this.mfaByUserId.set(userId, record);
   }
 
   async create(
@@ -165,11 +282,57 @@ export class FakeUserRepo implements UserRepo {
       role: input.role,
       passwordHash: input.passwordHash,
       active: true,
+      mfaEnabled: false,
+      mfaSecretEncrypted: null,
+      mfaSecretIv: null,
+      mfaRecoveryCodes: '[]',
+      mfaVerifiedAt: null,
       createdAt: now,
       updatedAt: now,
     };
     this.rows.push(row);
     return row;
+  }
+}
+
+/** In-memory audit trail. Records events; `list` mirrors the Pg filter/paging. */
+export class FakeAuditRepo implements AuditRepo {
+  readonly rows: AuditLogRow[] = [];
+  private seq = 0;
+
+  async append(event: AuditEvent): Promise<void> {
+    this.rows.push({
+      id: `audit-${++this.seq}`,
+      at: event.at,
+      actorUserId: event.actorUserId ?? null,
+      actorEmail: event.actorEmail ?? null,
+      action: event.action,
+      targetType: event.targetType ?? null,
+      targetId: event.targetId ?? null,
+      metadata: event.metadata ?? {},
+    });
+  }
+
+  async list(
+    filter: AuditLogFilter,
+    page: number,
+    pageSize: number,
+  ): Promise<Paged<AuditLogEntry>> {
+    const filtered = this.rows.filter(
+      (row) =>
+        (!filter.action || row.action === filter.action) &&
+        (!filter.actorUserId || row.actorUserId === filter.actorUserId) &&
+        (!filter.from || row.at.getTime() >= filter.from!.getTime()) &&
+        (!filter.to || row.at.getTime() <= filter.to!.getTime()),
+    );
+    filtered.sort((a, b) => b.at.getTime() - a.at.getTime() || b.id.localeCompare(a.id));
+    const start = (page - 1) * pageSize;
+    return {
+      items: filtered.slice(start, start + pageSize).map(toAuditLogDto),
+      page,
+      pageSize,
+      total: filtered.length,
+    };
   }
 }
 
@@ -392,6 +555,33 @@ export class FakeCrawlRunQueryRepo implements CrawlRunQueryRepo {
       .slice(0, limit)
       .map((entry) => toCrawlRunDto(entry.row, entry.sourceKey));
   }
+
+  async createQueued(input: {
+    sourceId: string;
+    requestedAt: Date;
+    requestedByUserId: string | null;
+    urls: readonly string[];
+  }): Promise<string> {
+    const row: CrawlRunRow = {
+      id: nextId('run'),
+      sourceId: input.sourceId,
+      status: 'queued',
+      startedAt: input.requestedAt,
+      requestedByUserId: input.requestedByUserId,
+      urls: [...input.urls],
+      createdAt: input.requestedAt,
+      metrics: defaultCrawlRunMetrics({
+        id: '',
+        status: 'queued',
+        listingsFound: 0,
+        listingsAdded: 0,
+        listingsUpdated: 0,
+        errors: [],
+      }),
+    };
+    this.rows.push({ row, sourceId: input.sourceId });
+    return row.id;
+  }
 }
 
 export class FakeSourceHealthRepo implements SourceHealthRepo {
@@ -436,24 +626,19 @@ export class FakeCrawlTrigger implements CrawlTrigger {
       listingsUnchanged: 0,
       errors: [],
       metrics: {
-        runId: 'run-new',
-        status: 'completed',
+        ...defaultCrawlRunMetrics({
+          id: 'run-new',
+          status: 'completed',
+          listingsFound: 1,
+          listingsAdded: 1,
+          listingsUpdated: 0,
+          errors: [],
+        }),
         startedAt: FIXED_NOW.toISOString(),
         finishedAt: FIXED_NOW.toISOString(),
         pagesAttempted: 1,
         pagesSucceeded: 1,
         pagesFailed: 0,
-        listingsDiscovered: 1,
-        listingsAccepted: 1,
-        listingsRejected: 0,
-        duplicateCandidates: 0,
-        listingsCreated: 1,
-        listingsUpdated: 0,
-        listingsUnchanged: 0,
-        parseErrors: 0,
-        httpErrors: 0,
-        robotsDenials: 0,
-        errors: [],
       },
       ...this.overrides,
     };
@@ -472,6 +657,7 @@ export interface TestHarness {
   health: FakeSourceHealthRepo;
   crawl: FakeCrawlTrigger;
   mfaChallenges: FakeMfaChallengeRepo;
+  audit: FakeAuditRepo;
   app: FastifyInstance;
 }
 
@@ -502,6 +688,7 @@ export async function buildTestHarness(
   }
   const crawl = new FakeCrawlTrigger();
   const mfaChallenges = new FakeMfaChallengeRepo();
+  const audit = new FakeAuditRepo();
 
   const deps: AppDeps = {
     users,
@@ -512,16 +699,29 @@ export async function buildTestHarness(
     health,
     crawl,
     mfaChallenges,
+    audit,
     sessionTtlHours: 24,
     now: fixedNow,
     ...options.deps,
   };
   const app = await buildApp(deps);
-  return { deps, users, sessions, listings, sources, crawlRuns, health, crawl, mfaChallenges, app };
+  return {
+    deps,
+    users,
+    sessions,
+    listings,
+    sources,
+    crawlRuns,
+    health,
+    crawl,
+    mfaChallenges,
+    audit,
+    app,
+  };
 }
 
 export async function createUser(
-  users: FakeUserRepo,
+  users: UserRepo,
   overrides: { email?: string; password?: string; role?: UserRow['role']; active?: boolean } = {},
 ): Promise<UserRow> {
   const row = await users.create(

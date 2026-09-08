@@ -9,18 +9,23 @@
  */
 import { randomBytes, scryptSync, createCipheriv, createDecipheriv } from 'node:crypto';
 
-import { MFA_ENCRYPTION_KEY } from '../config';
 import { compare, hash } from './passwords';
 
 const ALGORITHM = 'aes-256-gcm';
 const IV_LENGTH = 12;
 const AUTH_TAG_LENGTH = 16;
 
+/**
+ * Resolves the at-rest encryption key on every call so configuration changes
+ * are honored without a process restart and tests can scope the variable
+ * per-suite. The value is a 32-byte base64-encoded key.
+ */
 function getEncryptionKey(): Buffer {
-  if (!MFA_ENCRYPTION_KEY) {
+  const raw = process.env['MFA_ENCRYPTION_KEY']?.trim() || undefined;
+  if (!raw) {
     throw new Error('MFA_ENCRYPTION_KEY environment variable is required for MFA functionality');
   }
-  const key = Buffer.from(MFA_ENCRYPTION_KEY, 'base64');
+  const key = Buffer.from(raw, 'base64');
   if (key.length !== 32) {
     throw new Error('MFA_ENCRYPTION_KEY must be 32 bytes (base64-encoded)');
   }
@@ -62,10 +67,16 @@ export const RECOVERY_CODE_COUNT = 10;
 export const RECOVERY_CODE_LENGTH = 10;
 
 export function generateRecoveryCodes(): string[] {
+  // 32-symbol unambiguous alphabet (no I, O, 0, 1): matches ^[A-Z0-9]{10}$,
+  // and 32 divides 256 evenly so byte → symbol mapping has no modulo bias.
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   const codes: string[] = [];
   for (let i = 0; i < RECOVERY_CODE_COUNT; i++) {
     const bytes = randomBytes(RECOVERY_CODE_LENGTH);
-    const code = bytes.toString('base64url').slice(0, RECOVERY_CODE_LENGTH).toUpperCase();
+    let code = '';
+    for (let j = 0; j < RECOVERY_CODE_LENGTH; j++) {
+      code += alphabet[bytes[j] % alphabet.length];
+    }
     codes.push(code);
   }
   return codes;

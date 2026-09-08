@@ -5,12 +5,34 @@ import { z } from 'zod';
 import { bearerTokenOf, createAuthGuards } from '../auth/hooks';
 import { verifyPassword } from '../auth/passwords';
 import { hashToken, newSessionToken } from '../auth/tokens';
-import { verifyTotp } from '../auth/totp';
-import { verifyRecoveryCode } from '../auth/mfa-crypto';
+import { generateTotpSecret, otpauthTotpUrl, verifyTotp } from '../auth/totp';
+import {
+  encryptMfaSecret,
+  generateRecoveryCodes,
+  hashRecoveryCodes,
+  verifyRecoveryCode,
+} from '../auth/mfa-crypto';
 import { ApiError } from '../errors';
 import type { AppDeps } from '../ports';
 import { toUserDto } from '../serializers';
 import { DEFAULT_MFA_CHALLENGE_TTL_MS } from '../config';
+
+/** How the second factor (or none) satisfied the login. */
+type LoginMethod = 'password' | 'totp' | 'recovery_code';
+
+/**
+ * Fire-and-record an audit event: a failed audit write must never break the
+ * operation being audited, so append errors are logged and swallowed.
+ */
+function recordAudit(
+  deps: AppDeps,
+  request: { log: { error: (obj: unknown, msg: string) => void } },
+  event: Parameters<AppDeps['audit']['append']>[0],
+): Promise<void> {
+  return deps.audit.append(event).catch((error: unknown) => {
+    request.log.error({ error }, 'audit append failed');
+  });
+}
 
 const loginSchema = z
   .object({
@@ -56,8 +78,16 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
     async (request, reply) => {
       const body = loginSchema.parse(request.body);
       const email = body.email.trim().toLowerCase();
+      let authMethod: LoginMethod = 'password';
       const user = await deps.users.findByEmail(email);
       if (!user || !user.active || !(await verifyPassword(body.password, user.passwordHash))) {
+        // Pre-auth event: no actor id, only the attempted email snapshot.
+        await recordAudit(deps, request, {
+          action: 'auth.login.failed',
+          at: now(),
+          actorEmail: email,
+          metadata: { reason: 'invalid_credentials' },
+        });
         throw new ApiError(401, 'INVALID_CREDENTIALS', 'invalid email or password');
       }
 
@@ -95,10 +125,18 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
         const at = now();
         const consumed = await deps.mfaChallenges.consume(mfaChallengeId, at);
         if (!consumed || consumed.userId !== user.id) {
+          await recordAudit(deps, request, {
+            action: 'auth.login.failed',
+            at,
+            actorUserId: user.id,
+            actorEmail: user.email,
+            metadata: { reason: 'invalid_mfa_challenge' },
+          });
           throw new ApiError(401, 'INVALID_MFA_CHALLENGE', 'MFA challenge is invalid or expired');
         }
 
         let verified = false;
+        let authMethod: LoginMethod = 'totp';
 
         if (mfaCode && mfa.mfaSecret) {
           if (verifyTotp(mfa.mfaSecret, mfaCode, at)) {
@@ -110,11 +148,28 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
           const result = await verifyRecoveryCode(mfaRecoveryCode, mfa.mfaRecoveryCodes);
           if (result.valid) {
             verified = true;
+            authMethod = 'recovery_code';
             await deps.users.updateMfaRecoveryCodes(user.id, result.remainingCodes);
+            await recordAudit(deps, request, {
+              action: 'auth.mfa.recovery_code_used',
+              at,
+              actorUserId: user.id,
+              actorEmail: user.email,
+              targetType: 'user',
+              targetId: user.id,
+              metadata: { remainingCodes: result.remainingCodes.length },
+            });
           }
         }
 
         if (!verified) {
+          await recordAudit(deps, request, {
+            action: 'auth.login.failed',
+            at,
+            actorUserId: user.id,
+            actorEmail: user.email,
+            metadata: { reason: 'invalid_mfa_code' },
+          });
           throw new ApiError(401, 'INVALID_MFA_CODE', 'invalid MFA code or recovery code');
         }
       }
@@ -123,6 +178,14 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
       const { token, tokenHash } = newSessionToken();
       const expiresAt = new Date(at.getTime() + ttlMs);
       await deps.sessions.create({ userId: user.id, tokenHash, expiresAt }, at);
+
+      await recordAudit(deps, request, {
+        action: 'auth.login.success',
+        at,
+        actorUserId: user.id,
+        actorEmail: user.email,
+        metadata: { method: authMethod },
+      });
 
       const response: LoginResponse = {
         user: toUserDto(user),
@@ -146,8 +209,15 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
     async (request, reply) => {
       const body = loginSchema.pick({ email: true, password: true, mfaCode: true, mfaRecoveryCode: true, mfaChallengeId: true }).parse(request.body);
       const email = body.email.trim().toLowerCase();
+      let authMethod: LoginMethod = 'totp';
       const user = await deps.users.findByEmail(email);
       if (!user || !user.active || !(await verifyPassword(body.password, user.passwordHash))) {
+        await recordAudit(deps, request, {
+          action: 'auth.login.failed',
+          at: now(),
+          actorEmail: email,
+          metadata: { reason: 'invalid_credentials' },
+        });
         throw new ApiError(401, 'INVALID_CREDENTIALS', 'invalid email or password');
       }
 
@@ -168,6 +238,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
       const at = now();
       const consumed = await deps.mfaChallenges.consume(mfaChallengeId, at);
       if (!consumed || consumed.userId !== user.id) {
+        await recordAudit(deps, request, {
+          action: 'auth.login.failed',
+          at,
+          actorUserId: user.id,
+          actorEmail: user.email,
+          metadata: { reason: 'invalid_mfa_challenge' },
+        });
         throw new ApiError(401, 'INVALID_MFA_CHALLENGE', 'MFA challenge is invalid or expired');
       }
 
@@ -183,11 +260,28 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
         const result = await verifyRecoveryCode(mfaRecoveryCode, mfa.mfaRecoveryCodes);
         if (result.valid) {
           verified = true;
+          authMethod = 'recovery_code';
           await deps.users.updateMfaRecoveryCodes(user.id, result.remainingCodes);
+          await recordAudit(deps, request, {
+            action: 'auth.mfa.recovery_code_used',
+            at,
+            actorUserId: user.id,
+            actorEmail: user.email,
+            targetType: 'user',
+            targetId: user.id,
+            metadata: { remainingCodes: result.remainingCodes.length },
+          });
         }
       }
 
       if (!verified) {
+        await recordAudit(deps, request, {
+          action: 'auth.login.failed',
+          at,
+          actorUserId: user.id,
+          actorEmail: user.email,
+          metadata: { reason: 'invalid_mfa_code' },
+        });
         throw new ApiError(401, 'INVALID_MFA_CODE', 'invalid MFA code or recovery code');
       }
 
@@ -196,10 +290,141 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
       const expiresAt = new Date(at.getTime() + ttl);
       await deps.sessions.create({ userId: user.id, tokenHash, expiresAt }, at);
 
+      await recordAudit(deps, request, {
+        action: 'auth.login.success',
+        at,
+        actorUserId: user.id,
+        actorEmail: user.email,
+        metadata: { method: authMethod },
+      });
+
       return reply.status(200).send({
         user: toUserDto(user),
         token,
         expiresAt: expiresAt.toISOString(),
+      });
+    },
+  );
+
+  // ── MFA enrollment (DB-backed, two-step) ────────────────────────
+  // Step 1 stores an encrypted pending secret; step 2 verifies a TOTP code
+  // against it and atomically activates MFA plus provisions recovery codes.
+  // Both endpoints require an authenticated session (self-service).
+
+  // Enrollment is a bodyless action endpoint — accept an empty (or absent)
+  // body, but strictly reject any unknown fields.
+  const mfaEnrollSchema = z.object({}).strict().optional();
+  const mfaConfirmSchema = z
+    .object({
+      code: z.string().regex(/^\d{6}$/, 'code must be a 6-digit string'),
+    })
+    .strict();
+
+  app.post(
+    '/auth/mfa/enroll',
+    { preHandler: guards.requireAuth },
+    async (request, reply) => {
+      mfaEnrollSchema.parse(request.body);
+      const user = request.user!;
+      const mfa = await deps.users.findMfaConfig(user.id);
+      if (mfa.mfaEnabled) {
+        throw new ApiError(409, 'MFA_ALREADY_ENABLED', 'MFA is already enabled for this user');
+      }
+
+      const secret = generateTotpSecret();
+      let encrypted: { encrypted: string; iv: string };
+      try {
+        encrypted = encryptMfaSecret(secret);
+      } catch {
+        throw new ApiError(
+          500,
+          'MFA_NOT_CONFIGURED',
+          'MFA_ENCRYPTION_KEY is required to enroll MFA (32 bytes, base64-encoded)',
+        );
+      }
+
+      await deps.users.saveMfaEnrollmentSecret(
+        user.id,
+        { mfaSecretEncrypted: encrypted.encrypted, mfaSecretIv: encrypted.iv },
+        now(),
+      );
+
+      await recordAudit(deps, request, {
+        action: 'auth.mfa.enrollment_started',
+        at: now(),
+        actorUserId: user.id,
+        actorEmail: user.email,
+        targetType: 'user',
+        targetId: user.id,
+      });
+
+      return reply.status(200).send({
+        secret,
+        otpauthUrl: otpauthTotpUrl({
+          secret,
+          accountName: user.email,
+          issuer: 'cre-command',
+        }),
+      });
+    },
+  );
+
+  app.post(
+    '/auth/mfa/confirm',
+    {
+      preHandler: guards.requireAuth,
+      config: {
+        rateLimit: {
+          max: mfaVerifyRateLimitMax,
+          timeWindow: mfaVerifyRateLimitWindowMs,
+        },
+      },
+    },
+    async (request, reply) => {
+      const body = mfaConfirmSchema.parse(request.body);
+      const user = request.user!;
+      const at = now();
+      const mfa = await deps.users.findMfaConfig(user.id);
+      if (mfa.mfaEnabled) {
+        throw new ApiError(409, 'MFA_ALREADY_ENABLED', 'MFA is already enabled for this user');
+      }
+      if (!mfa.mfaSecret) {
+        throw new ApiError(
+          400,
+          'MFA_NOT_ENROLLED',
+          'start MFA enrollment with POST /auth/mfa/enroll before confirming',
+        );
+      }
+      if (!verifyTotp(mfa.mfaSecret, body.code, at)) {
+        throw new ApiError(401, 'INVALID_MFA_CODE', 'invalid MFA code');
+      }
+
+      const recoveryCodes = generateRecoveryCodes();
+      const hashedRecoveryCodes = await hashRecoveryCodes(recoveryCodes);
+      const encrypted = encryptMfaSecret(mfa.mfaSecret);
+      await deps.users.activateMfa(
+        user.id,
+        {
+          mfaSecretEncrypted: encrypted.encrypted,
+          mfaSecretIv: encrypted.iv,
+          hashedRecoveryCodes,
+          mfaVerifiedAt: at,
+        },
+        at,
+      );
+
+      await recordAudit(deps, request, {
+        action: 'auth.mfa.enabled',
+        at,
+        actorUserId: user.id,
+        actorEmail: user.email,
+        targetType: 'user',
+        targetId: user.id,
+      });
+
+      return reply.status(200).send({
+        user: request.user,
+        recoveryCodes,
       });
     },
   );

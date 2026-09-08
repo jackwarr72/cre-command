@@ -27,6 +27,8 @@ import { vivanunciosAdapter } from '@cre/adapters';
 import { Crawler } from '../src/crawl';
 import { fingerprintListing, materializedFromCandidate } from '../src/fingerprint';
 import { summarizeMetrics } from '../src/metrics';
+import type { RobotsPolicy } from '@cre/shared';
+
 import type {
   Clock,
   CrawlRunRepository,
@@ -36,7 +38,7 @@ import type {
   ListingRepository,
   ObservationRepository,
   RobotsChecker,
-  RobotsPolicy,
+  RobotsDecision,
   SourceRepository,
 } from '../src/ports';
 
@@ -204,7 +206,7 @@ class FakeHttp implements HttpClient {
 }
 
 class FakeRobots implements RobotsChecker {
-  async isAllowed(_url: string, _policy: RobotsPolicy): Promise<{ allowed: boolean; reason: string }> {
+  async isAllowed(_url: string, _policy: RobotsPolicy): Promise<RobotsDecision> {
     return { allowed: true, reason: 'rules_allow' };
   }
 }
@@ -518,7 +520,9 @@ describe('Vivanuncios ingestion contract: pipeline', () => {
 
     h.listings.inserts = 0;
     h.listings.updates = 0;
-    h.observations.recorded = [];
+    // `recorded` is a readonly binding; clear the array in place instead of
+    // reassigning it.
+    h.observations.recorded.length = 0;
 
     const second = await h.crawl(['https://www.vivanuncios.com.mx/s/ofertas/oficinas-en-renta/']);
 

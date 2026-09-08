@@ -138,6 +138,64 @@ export class PgCrawlRunRepository implements CrawlRunRepository {
     return row.id;
   }
 
+  async createQueued(input: {
+    sourceId: string;
+    requestedAt: Date;
+    requestedByUserId: string | null;
+    urls: readonly string[];
+  }): Promise<string> {
+    const rows = await this.db
+      .insert(crawlRuns)
+      .values({
+        sourceId: input.sourceId,
+        status: 'queued',
+        startedAt: input.requestedAt,
+        requestedByUserId: input.requestedByUserId,
+        urls: [...input.urls],
+      })
+      .returning({ id: crawlRuns.id });
+    const row = rows[0];
+    if (!row) throw new Error('crawl run insert returned no id');
+    return row.id;
+  }
+
+  async claimForExecution(
+    runId: string,
+    workerId: string,
+    startedAt: Date,
+  ): Promise<
+    | { status: 'claimed' }
+    | { status: 'already_running' }
+    | { status: 'already_terminal' }
+    | { status: 'not_found' }
+  > {
+    const rows = await this.db
+      .update(crawlRuns)
+      .set({
+        status: 'running',
+        startedAt,
+        workerId,
+      })
+      .where(
+        and(eq(crawlRuns.id, runId), eq(crawlRuns.status, 'queued')),
+      )
+      .returning({ id: crawlRuns.id });
+
+    if (rows.length === 0) {
+      // Check if it exists but is already terminal or running
+      const existing = await this.db
+        .select({ id: crawlRuns.id, status: crawlRuns.status })
+        .from(crawlRuns)
+        .where(eq(crawlRuns.id, runId))
+        .limit(1);
+      if (existing.length === 0) return { status: 'not_found' };
+      return existing[0]!.status === 'running'
+        ? { status: 'already_running' }
+        : { status: 'already_terminal' };
+    }
+    return { status: 'claimed' };
+  }
+
   async finish(runId: string, accounting: CrawlRunAccounting): Promise<void> {
     await this.db
       .update(crawlRuns)

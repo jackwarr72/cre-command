@@ -10,3 +10,4 @@ export { dashboardApi, type DashboardSummary } from './dashboard';
 export { listingsApi } from './listings';
 export { sourcesApi, type SourceDto, type SourcePolicyPatch } from './sources';
 export { crawlRunsApi, type CrawlOutcome, type CrawlRunFilter, type TriggerCrawlRequest } from './crawl-runs';
+export { auditLogApi, AUDIT_ACTIONS, type AuditLogFilter } from './audit-log';

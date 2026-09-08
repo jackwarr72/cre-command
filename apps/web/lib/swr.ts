@@ -10,8 +10,8 @@
  */
 import useSWR from 'swr';
 
-import { authApi, dashboardApi, listingsApi, sourcesApi, crawlRunsApi } from '@/lib/api';
-import type { CrawlRun, Listing, ListingFilter, Paged, User } from '@cre/shared';
+import { authApi, auditLogApi, dashboardApi, listingsApi, sourcesApi, crawlRunsApi } from '@/lib/api';
+import type { AuditLogEntry, AuditLogFilter, CrawlRunWithMetrics, Listing, ListingFilter, Paged, User } from '@cre/shared';
 import type {
   CrawlOutcome,
   CrawlRunFilter,
@@ -76,10 +76,17 @@ export function useCrawlRuns(filter: CrawlRunFilter, page: number, pageSize: num
 
 export function useCrawlRun(id: string | null) {
   const enabled = !!id;
-  return useSWR<CrawlRun>(
+  return useSWR<CrawlRunWithMetrics>(
     enabled ? ['crawl-run', id] : null,
     ([, runId]: [string, string]) => crawlRunsApi.get(runId),
   );
+}
+
+// ── Audit log ─────────────────────────────────────────────────
+
+export function useAuditLog(filter: AuditLogFilter, page: number, pageSize: number) {
+  const key = ['audit-log', filter, page, pageSize] as const;
+  return useSWR<Paged<AuditLogEntry>>(key, () => auditLogApi.list(filter, page, pageSize));
 }
 
 export interface TriggerCrawlOptions {

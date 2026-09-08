@@ -72,19 +72,24 @@ describe('GET /api/listings', () => {
     const response = await h.app.inject({ method: 'GET', url: '/api/listings', headers });
 
     expect(response.statusCode).toBe(200);
-    const body = response.json();
+    const body = response.json() as {
+      page: number;
+      pageSize: number;
+      total: number;
+      items: Array<{ id: string; sourceKey: string }>;
+    };
     expect(body.page).toBe(1);
     expect(body.pageSize).toBe(25);
     expect(body.total).toBe(3);
     // Newest first: C (07-01) → A (06-03) → B (06-02).
-    expect(body.items.map((item: { id: string }) => item.id)).toEqual([
+    expect(body.items.map((item) => item.id)).toEqual([
       listingC.id,
       listingA.id,
       listingB.id,
     ]);
-    const byId = new Map(body.items.map((item: { id: string; sourceKey: string }) => [item.id, item]));
-    expect(byId.get(listingA.id).sourceKey).toBe('vivanuncios');
-    expect(byId.get(listingB.id).sourceKey).toBe('inmuebles24');
+    const byId = new Map(body.items.map((item) => [item.id, item] as const));
+    expect(byId.get(listingA.id)!.sourceKey).toBe('vivanuncios');
+    expect(byId.get(listingB.id)!.sourceKey).toBe('inmuebles24');
   });
 
   it('free-text searches q across title/description/address', async () => {

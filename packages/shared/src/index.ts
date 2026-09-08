@@ -500,6 +500,42 @@ export interface ExportJob {
   completedAt?: ISODateTime;
 }
 
+// ── Audit log ────────────────────────────────────────────────────
+
+/** Security/policy actions recorded in the append-only audit trail. */
+export const AUDIT_ACTIONS = [
+  'auth.login.success',
+  'auth.login.failed',
+  'auth.mfa.enrollment_started',
+  'auth.mfa.enabled',
+  'auth.mfa.recovery_code_used',
+  'source.policy_updated',
+  'crawl.triggered',
+] as const;
+export type AuditAction = (typeof AUDIT_ACTIONS)[number];
+
+export interface AuditLogEntry {
+  id: ID;
+  at: ISODateTime;
+  /** Authenticated actor; null for pre-auth events (e.g. failed logins). */
+  actorUserId: ID | null;
+  /** Email snapshot at event time (preserved when accounts are removed). */
+  actorEmail: string | null;
+  action: AuditAction;
+  /** What the action targeted, e.g. `source` + the source key. */
+  targetType: string | null;
+  targetId: string | null;
+  /** Action-specific detail (changed fields, outcome, …) — never secrets. */
+  metadata: Record<string, unknown>;
+}
+
+export interface AuditLogFilter {
+  action?: AuditAction;
+  actorUserId?: ID;
+  from?: ISODateTime;
+  to?: ISODateTime;
+}
+
 export interface PageQuery {
   /** 1-based page number. */
   page?: number;

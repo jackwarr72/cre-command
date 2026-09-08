@@ -1,13 +1,14 @@
 /**
  * Crawl-runs API endpoints.
  *
- * GET  /api/crawl-runs  → Paged<CrawlRun>   (paginated, optionally filtered)
- * POST /api/crawl-runs  → CrawlOutcome      (trigger a crawl — operator only)
+ * GET  /api/crawl-runs  → Paged<CrawlRunWithMetrics>  (paginated, filtered;
+ *                         every row carries the serializer's `metrics` block)
+ * POST /api/crawl-runs  → CrawlOutcome                (trigger — operator only)
  */
 import type {
   CrawlError,
-  CrawlRun,
   CrawlRunStatus,
+  CrawlRunWithMetrics,
   Paged,
 } from '@cre/shared';
 
@@ -41,7 +42,7 @@ export const crawlRunsApi = {
     filter: CrawlRunFilter,
     page: number,
     pageSize: number,
-  ): Promise<Paged<CrawlRun>> =>
+  ): Promise<Paged<CrawlRunWithMetrics>> =>
     apiRequest('/crawl-runs', {
       query: {
         page,
@@ -52,7 +53,7 @@ export const crawlRunsApi = {
       },
     }),
 
-  get: (id: string): Promise<CrawlRun> => apiRequest(`/crawl-runs/${id}`),
+  get: (id: string): Promise<CrawlRunWithMetrics> => apiRequest(`/crawl-runs/${id}`),
 
   trigger: (sourceKey: string, urls?: string[]): Promise<CrawlOutcome> =>
     apiRequest('/crawl-runs', {

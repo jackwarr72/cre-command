@@ -110,9 +110,27 @@ export interface CrawlRunAccounting {
 }
 
 export interface CrawlRunRepository {
-  /** Opens a run (status `running`, `startedAt` stamped) and returns its id. */
+  /** Open a run (status `running`, `startedAt` stamped) and return its id. */
   create(sourceId: string, startedAt: Date): Promise<string>;
-  /** Closes a run with terminal accounting. */
+  /** Create a queued run without starting it. Returns the run id. */
+  createQueued(input: {
+    sourceId: string;
+    requestedAt: Date;
+    requestedByUserId: string | null;
+    urls: readonly string[];
+  }): Promise<string>;
+  /** Atomically claim a queued run for execution. */
+  claimForExecution(
+    runId: string,
+    workerId: string,
+    startedAt: Date,
+  ): Promise<
+    | { status: 'claimed' }
+    | { status: 'already_running' }
+    | { status: 'already_terminal' }
+    | { status: 'not_found' }
+  >;
+  /** Close a run with terminal accounting. */
   finish(runId: string, accounting: CrawlRunAccounting): Promise<void>;
 }
 

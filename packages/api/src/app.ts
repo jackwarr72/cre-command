@@ -5,6 +5,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { decorateRequestUser } from './auth/hooks';
 import { registerErrorHandler } from './errors';
 import type { AppDeps, SecurityOptions } from './ports';
+import { registerAuditLogRoute } from './routes/auditLog';
 import { registerAuthRoutes } from './routes/auth';
 import { registerCrawlRunRoutes } from './routes/crawlRuns';
 import { registerDashboardRoute } from './routes/dashboard';
@@ -153,6 +154,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       registerSourceRoutes(api, deps);
       registerCrawlRunRoutes(api, deps);
       registerDashboardRoute(api, deps);
+      registerAuditLogRoute(api, deps);
     },
     { prefix: '/api' },
   );

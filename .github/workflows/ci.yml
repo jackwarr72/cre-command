@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+# Cancel superseded runs for the same branch/PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, tests, builds
+    runs-on: ubuntu-latest
+
+    # Service containers with health gates: steps below only start once both
+    # are actually accepting connections, not merely "container started".
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: cre
+          POSTGRES_PASSWORD: cre
+          POSTGRES_DB: cre_command
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U cre -d cre_command"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 56379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+
+    env:
+      DATABASE_URL: postgres://cre:cre@localhost:55432/cre_command
+      REDIS_URL: redis://localhost:56379
+      # Test-only key (32 bytes, base64). MFA suites also set their own.
+      MFA_ENCRYPTION_KEY: MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=
+      # Missing/unreachable services FAIL the job — never silently skip.
+      CRE_ENFORCE_INTEGRATION: '1'
+      NEXT_TELEMETRY_DISABLED: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Caches the npm download cache (~/.npm) keyed on package-lock.json.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Also serves as the API build check: packages/api runs via tsx and has
+      # no separate build artifact, so strict tsc --noEmit is its gate.
+      - name: Typecheck (all workspaces)
+        run: npm run typecheck
+
+      - name: Unit tests (no services required)
+        run: npm run test:unit
+
+      - name: Apply migrations to the fresh service database
+        run: npm run db:migrate -w packages/db
+
+      # Enforced by CRE_ENFORCE_INTEGRATION=1: fails if PostgreSQL or Redis
+      # are unavailable rather than skipping the suites.
+      - name: Integration tests (PostgreSQL + Redis)
+        run: npm run test:integration
+
+      - name: Build web (Next.js production)
+        run: npm run build:web

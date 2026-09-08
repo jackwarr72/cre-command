@@ -221,11 +221,18 @@ export const crawlRuns = pgTable(
       .notNull()
       .default(sql`'{}'::jsonb`),
     createdAt: timestamp('created_at', { mode: 'date' }).notNull().defaultNow(),
+    /** URLs requested for this crawl run (stored so workers can re-resolve). */
+    urls: jsonb('urls').$type<string[]>().notNull().default(sql`'[]'::jsonb`),
+    /** User ID that requested this crawl (nullable for system-triggered runs). */
+    requestedByUserId: uuid('requested_by_user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Worker identifier that claimed this run for execution. */
+    workerId: text('worker_id'),
   },
   (t) => [
     index('crawl_runs_source_idx').on(t.sourceId),
     index('crawl_runs_status_idx').on(t.status),
     index('crawl_runs_created_idx').on(t.createdAt),
+    index('crawl_runs_requested_by_idx').on(t.requestedByUserId),
   ],
 );
 
@@ -255,7 +262,7 @@ export const users = pgTable(
      * bcrypt-hashed one-time recovery codes (JSON array). Each code is used once;
      * the array is replaced when all codes are exhausted.
      */
-    mfaRecoveryCodes: text('mfa_recovery_codes').notNull().default("'[]'"),
+    mfaRecoveryCodes: text('mfa_recovery_codes').notNull().default('[]'),
     /** When MFA was last successfully verified (tracks enrollment age). */
     mfaVerifiedAt: timestamp('mfa_verified_at', { mode: 'date' }),
     createdAt: timestamp('created_at', { mode: 'date' }).notNull().defaultNow(),
@@ -285,6 +292,41 @@ export const sessions = pgTable(
   (t) => [
     uniqueIndex('sessions_token_hash_uidx').on(t.tokenHash),
     index('sessions_user_idx').on(t.userId),
+  ],
+);
+
+// ── Audit log ─────────────────────────────────────────────────────
+
+/**
+ * Append-only security/policy audit trail. One row per security-relevant
+ * action (logins, MFA changes, source policy changes, manual crawl triggers).
+ * Pre-authentication events (failed logins) have a null actor; the attempted
+ * email is snapshotted separately. `metadata` carries action-specific detail
+ * (e.g. which fields a policy patch changed) and never contains secrets.
+ */
+export const auditLog = pgTable(
+  'audit_log',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    at: timestamp('at', { mode: 'date' }).notNull().defaultNow(),
+    /** Authenticated actor, if any (null for pre-auth events such as failed logins). */
+    actorUserId: uuid('actor_user_id').references(() => users.id, { onDelete: 'set null' }),
+    /** Email snapshot — preserves attribution when accounts are later removed. */
+    actorEmail: text('actor_email'),
+    action: text('action').notNull(),
+    /** What the action targeted, e.g. { type: 'source', id: 'vivanuncios' }. */
+    targetType: text('target_type'),
+    targetId: text('target_id'),
+    /** Action-specific detail (changed fields, url counts, …) — never secrets. */
+    metadata: jsonb('metadata')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+  },
+  (t) => [
+    index('audit_log_at_idx').on(t.at),
+    index('audit_log_actor_idx').on(t.actorUserId),
+    index('audit_log_action_idx').on(t.action),
   ],
 );
 
@@ -318,6 +360,57 @@ export const sessionsRelations = relations(sessions, ({ one }) => ({
   user: one(users, { fields: [sessions.userId], references: [users.id] }),
 }));
 
+export const auditLogRelations = relations(auditLog, ({ one }) => ({
+  actor: one(users, { fields: [auditLog.actorUserId], references: [users.id] }),
+}));
+
+// ── Outbox (transactional job queue) ───────────────────────────────
+
+/**
+ * Transactional outbox for job queuing. When a crawl run is triggered, an outbox
+ * record is written in the same transaction as the crawl run. A background worker
+ * polls this table and publishes jobs to the queue. If the worker crashes, records
+ * remain and are retried — guaranteeing: a persisted queued crawl run will
+ * eventually have a corresponding queue job, or is visibly recoverable as an
+ * unpublished outbox record.
+ *
+ * The `type` column allows reuse across CSV exports, scheduled crawls,
+ * notifications, CRM sync, and SLA checks — all sharing the same architecture.
+ */
+export const outbox = pgTable(
+  'outbox',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    /** Job type — e.g. 'crawl.run', 'csv.export', 'notification'. */
+    type: text('type').notNull(),
+    /** Opaque payload for the worker; schema depends on type. */
+    payload: jsonb('payload')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default(sql`'{}'::jsonb`),
+    /** Processing state. */
+    status: text('status').notNull().default('pending'),
+    /** Number of processing attempts. */
+    attempts: integer('attempts').notNull().default(0),
+    /** Error message from the last failed attempt. */
+    lastError: text('last_error'),
+    /** When the record was created. */
+    createdAt: timestamp('created_at', { mode: 'date' }).notNull().defaultNow(),
+    /** When processing started (null if never picked up). */
+    startedAt: timestamp('started_at', { mode: 'date' }),
+    /** When processing completed (success or final failure). */
+    completedAt: timestamp('completed_at', { mode: 'date' }),
+    /** Optional correlation ID linking to a crawl run or other entity. */
+    correlationId: uuid('correlation_id'),
+  },
+  (t) => [
+    index('outbox_status_created_idx').on(t.status, t.createdAt),
+    index('outbox_correlation_idx').on(t.correlationId),
+  ],
+);
+
+export const outboxRelations = relations(outbox, () => ({}));
+
 // ── Row types ─────────────────────────────────────────────────────
 
 export type SourceRow = typeof sources.$inferSelect;
@@ -331,6 +424,12 @@ export type NewContactRow = typeof contacts.$inferInsert;
 export type CrawlRunRow = typeof crawlRuns.$inferSelect;
 export type NewCrawlRunRow = typeof crawlRuns.$inferInsert;
 export type UserRow = typeof users.$inferSelect;
-export type NewUserRow = typeof users.$inferInsert;
+export type NewUserRow = typeof users.$inferSelect;
 export type SessionRow = typeof sessions.$inferSelect;
-export type NewSessionRow = typeof sessions.$inferInsert;
+export type NewSessionRow = typeof sessions.$inferSelect;
+export type AuditLogRow = typeof auditLog.$inferSelect;
+export type NewAuditLogRow = typeof auditLog.$inferInsert;
+// ── Outbox row types ─────────────────────────────────────────────────
+
+export type OutboxRow = typeof outbox.$inferSelect;
+export type NewOutboxRow = typeof outbox.$inferInsert;

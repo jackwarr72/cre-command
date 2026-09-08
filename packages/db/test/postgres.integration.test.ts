@@ -8,19 +8,25 @@ import { Pool, type PoolClient } from 'pg';
 import type { Database } from '../src/postgres/client';
 import * as schema from '../src/postgres/schema';
 import {
+  auditLog,
   contacts,
   crawlRuns,
   listingObservations,
   listings,
+  sessions,
   sources,
+  users,
 } from '../src/postgres/schema';
 
 /**
  * Integration suite against a real PostgreSQL.
- * Skipped unless DATABASE_URL is provided, e.g.:
- *   DATABASE_URL=postgres://cre:cre@localhost:55432/cre_command npm test
+ * Skipped unless DATABASE_URL is provided; with CRE_ENFORCE_INTEGRATION=1
+ * (CI) a missing DATABASE_URL fails the run instead of skipping, e.g.:
+ *   DATABASE_URL=postgres://cre:cre@localhost:55432/cre_command npm run test:integration
  */
-const url = process.env.DATABASE_URL;
+import { requireServiceEnv } from '../../../test-support/integration';
+
+const url = requireServiceEnv('PostgreSQL', 'DATABASE_URL');
 const migrationsDir = fileURLToPath(new URL('../src/postgres/migrations', import.meta.url));
 
 describe.skipIf(!url)('postgres integration', () => {
@@ -307,5 +313,78 @@ it('enforces sources.key uniqueness', async () => {
       .from(listings)
       .where(eq(listings.externalId, 'same-id'));
     expect(count).toHaveLength(1);
+  });
+
+it('round-trips a user row with MFA enrollment fields (encrypted at rest, hashed recovery codes, verified-at)', async () => {
+    const verifiedAt = new Date('2026-09-07T10:30:00.000Z');
+    const [user] = await db
+      .insert(users)
+      .values({
+        email: 'mfa-roundtrip@cre.test',
+        passwordHash: 'not-a-real-hash',
+        role: 'admin',
+        mfaEnabled: true,
+        mfaSecretEncrypted: 'ciphertext-not-plaintext',
+        mfaSecretIv: 'iv-hex',
+        mfaRecoveryCodes: JSON.stringify(['$2a$10$hashed-one', '$2a$10$hashed-two']),
+        mfaVerifiedAt: verifiedAt,
+      })
+      .returning();
+
+    expect(user.mfaEnabled).toBe(true);
+    expect(user.mfaSecretEncrypted).not.toBeNull();
+
+    const [row] = await db.select().from(users).where(eq(users.id, user.id));
+    expect(row.mfaEnabled).toBe(true);
+    expect(row.mfaSecretEncrypted).toBe('ciphertext-not-plaintext');
+    expect(row.mfaSecretIv).toBe('iv-hex');
+    expect(JSON.parse(row.mfaRecoveryCodes!)).toEqual(['$2a$10$hashed-one', '$2a$10$hashed-two']);
+    expect(row.mfaVerifiedAt?.getTime()).toBe(verifiedAt.getTime());
+  });
+
+  it('defaults users to MFA-disabled with an empty recovery-code list', async () => {
+    const [row] = await db
+      .insert(users)
+      .values({ email: 'mfa-defaults@cre.test', passwordHash: 'x' })
+      .returning();
+    expect(row.mfaEnabled).toBe(false);
+    expect(row.mfaSecretEncrypted).toBeNull();
+    expect(row.mfaRecoveryCodes).toBe('[]');
+  });
+
+  it('enforces unique user emails', async () => {
+    await db.insert(users).values({ email: 'dup@cre.test', passwordHash: 'a' });
+    await expect(
+      db.insert(users).values({ email: 'dup@cre.test', passwordHash: 'b' }),
+    ).rejects.toThrow(/duplicate key value violates unique constraint "users_email_uidx"/);
+  });
+
+  it('cascades user deletion to their sessions', async () => {
+    const [user] = await db.insert(users).values({ email: 'cascade-session@cre.test', passwordHash: 'x' }).returning();
+    await db.insert(sessions).values({ userId: user.id, tokenHash: 'tok', expiresAt: new Date('2026-09-20T00:00:00.000Z') });
+
+    await db.delete(users).where(eq(users.id, user.id));
+    const found = await db.select().from(sessions).where(eq(sessions.tokenHash, 'tok'));
+    expect(found).toHaveLength(0);
+  });
+
+  it('appends audit events with jsonb defaults and preserves attribution via set-null FK', async () => {
+    const [user] = await db.insert(users).values({ email: 'audit-actor@cre.test', passwordHash: 'x' }).returning();
+
+    // Minimal event: defaults fill in at/metadata; actor + target recorded.
+    const [event] = await db
+      .insert(auditLog)
+      .values({ actorUserId: user.id, actorEmail: user.email, action: 'source.policy_updated', targetType: 'source', targetId: 'vivanuncios' })
+      .returning();
+    expect(event.at).toBeInstanceOf(Date);
+    expect(event.metadata).toEqual({});
+    expect(event.actorUserId).toBe(user.id);
+
+    // Deleting the actor must NOT delete the audit row (set-null FK).
+    await db.delete(users).where(eq(users.id, user.id));
+    const [after] = await db.select().from(auditLog).where(eq(auditLog.id, event.id));
+    expect(after).toBeDefined();
+    expect(after.actorUserId).toBeNull();
+    expect(after.actorEmail).toBe('audit-actor@cre.test');
   });
 });

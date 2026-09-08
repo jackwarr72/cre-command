@@ -170,6 +170,80 @@ export class Crawler {
     return this.runPipeline(request, source, runId, clock, startedAt, recordError, errors);
   }
 
+  /** Execute an existing queued crawl run (claimed by a worker).
+   *
+   *  This is the entry point used by workers that have already claimed a run
+   *  via `claimForExecution`.  The method re-uses the same pipeline logic as
+   *  `crawl()` but operates on an already-created queued run instead of creating
+   *  one from scratch.
+   *
+   *  @param runId  The crawl run to execute (must be in 'queued' status)
+   *  @param source  The source configuration
+   *  @param urls    The entry-point URLs
+   *  @param clock   Optional clock for deterministic timing
+   */
+  async executeExistingRun(
+    runId: string,
+    adapter: SourceAdapter,
+    urls: readonly string[],
+    clock?: Clock,
+  ): Promise<CrawlOutcome> {
+    const clockObj = clock ?? systemClock;
+    const startedAt = clockObj.now();
+    const repos = this.options.repositories;
+    const errors: CrawlError[] = [];
+    const recordError = (message: string, url?: string, fatal = false): void => {
+      const entry: CrawlError = { message, url, retries: 0, at: clockObj.now().toISOString() };
+      if (fatal) entry.fatal = true;
+      errors.push(entry);
+    };
+
+    // Re-use the same canCrawl gate — look up source by the adapter's key
+    const source: SourceRow | null = await repos.sources.findByKey(adapter.sourceKey);
+    const decision = canCrawl(source);
+
+    if (!decision.allowed || !source) {
+      if (!source) {
+        const metrics = zeroedMetrics();
+        metrics.status = 'failed';
+        metrics.errors = [
+          {
+            message: decision.message,
+            retries: 0,
+            fatal: true,
+            at: clockObj.now().toISOString(),
+          },
+        ];
+        return {
+          runId: null,
+          status: 'failed',
+          rejected: decision,
+          ...ZEROED_COUNTS,
+          errors: metrics.errors,
+        };
+      }
+      recordError(`${decision.reason}: ${decision.message}`, undefined, true);
+      const metrics = zeroedMetrics();
+      metrics.status = 'cancelled';
+      metrics.runId = runId;
+      metrics.errors = errors;
+      metrics.startedAt = startedAt.toISOString();
+      metrics.finishedAt = clockObj.now().toISOString();
+      await repos.crawlRuns.finish(runId, {
+        status: 'cancelled',
+        finishedAt: clockObj.now(),
+        listingsFound: 0,
+        listingsAdded: 0,
+        listingsUpdated: 0,
+        errors,
+        metrics,
+      });
+      return { runId, status: 'cancelled', rejected: decision, ...ZEROED_COUNTS, errors, metrics };
+    }
+
+    return this.runPipeline({ adapter, urls }, source, runId, clockObj, startedAt, recordError, errors);
+  }
+
   /** Fetch → parse → dedup → persist → account. Runs only after the policy gate. */
   private async runPipeline(
     request: CrawlRequest,

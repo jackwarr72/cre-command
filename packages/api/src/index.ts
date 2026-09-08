@@ -17,10 +17,14 @@
  */
 import { createDatabase, createPool, type Database } from '@cre/db';
 
+import { Redis } from 'ioredis';
+
 import { buildApp } from './app';
 import { ensureBootstrapAdmin } from './auth/bootstrap';
 import { InMemoryMfaChallengeRepo } from './auth/mfa-challenges';
+import { RedisMfaChallengeRepo, type RedisClient } from './auth/redis-mfa-challenges';
 import { loadConfig } from './config';
+import type { MfaChallengeRepo } from './ports';
 import { createCrawlTrigger } from './postgres/crawler';
 import { createApiRepositories } from './postgres/repositories';
 
@@ -30,7 +34,36 @@ const config = loadConfig();
 const pool = createPool();
 const db: Database = createDatabase(pool);
 const repos = createApiRepositories(db);
-const mfaChallenges = new InMemoryMfaChallengeRepo();
+
+// ── MFA challenge store ──────────────────────────────────────────
+// `REDIS_URL` opts into the Redis-backed store (shared across API instances
+// behind a load balancer, survives restarts via key TTLs). Without it the
+// in-process store is used, which matches the existing single-instance
+// deployment. Redis is dialed after the app builds so connection errors are
+// logged through pino and fail startup fast (fail-closed configuration).
+let redis: Redis | null = null;
+let redisClient: RedisClient | null = null;
+let inMemoryMfaChallenges: InMemoryMfaChallengeRepo | null = null;
+let mfaChallenges: MfaChallengeRepo;
+if (config.redisUrl) {
+  redis = new Redis(config.redisUrl, {
+    lazyConnect: true,
+  });
+  // Adapter: ioredis's `set` is heavily overloaded; the MFA store needs only
+  // the minimal (key, value, { ex }) contract.
+  redisClient = {
+    get: (key) => redis!.get(key),
+    set: (key, value, options) =>
+      options?.ex
+        ? redis!.set(key, value, 'EX', options.ex).then(() => undefined)
+        : redis!.set(key, value).then(() => undefined),
+    del: (key) => redis!.del(key),
+  };
+  mfaChallenges = new RedisMfaChallengeRepo(redisClient, () => new Date());
+} else {
+  inMemoryMfaChallenges = new InMemoryMfaChallengeRepo();
+  mfaChallenges = inMemoryMfaChallenges;
+}
 
 const app = await buildApp({
   ...repos,
@@ -48,6 +81,21 @@ const app = await buildApp({
   logLevel: config.logLevel,
   logger: true,
 });
+
+// ── Redis connection (opt-in via REDIS_URL) ─────────────────────────
+if (redis) {
+  redis.on('error', (error: unknown) => {
+    app.log.error({ error }, 'redis connection error');
+  });
+  try {
+    await redis.connect();
+  } catch (error) {
+    app.log.error({ error }, 'failed to connect to redis — aborting startup');
+    await pool.end().catch(() => undefined);
+    throw error;
+  }
+  app.log.info({ enabled: true }, 'using redis-backed MFA challenge store');
+}
 
 const bootstrap = await ensureBootstrapAdmin(repos.users, {
   email: config.adminEmail,
@@ -84,7 +132,11 @@ async function shutdown(signal: string): Promise<void> {
   shuttingDown = true;
   app.log.info({ signal }, 'shutting down');
   if (pruneTimer) clearInterval(pruneTimer);
-  mfaChallenges.stop();
+  if (redis) {
+    redis.disconnect();
+  } else {
+    inMemoryMfaChallenges?.stop();
+  }
   // Stop accepting new connections and await in-flight requests (bounded by
   // fastify's closeTimeout); then close the pool so the process can exit.
   try {

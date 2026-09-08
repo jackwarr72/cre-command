@@ -1,5 +1,12 @@
-import type { CrawlRunRow, ListingRow, SourceRow, UserRow } from '@cre/db';
-import type { CrawlRun, CrawlRunWithMetrics, CrawlRunMetrics, Listing, User } from '@cre/shared';
+import type { AuditLogRow, CrawlRunRow, ListingRow, SourceRow, UserRow } from '@cre/db';
+import type {
+  AuditLogEntry,
+  CrawlRun,
+  CrawlRunWithMetrics,
+  CrawlRunMetrics,
+  Listing,
+  User,
+} from '@cre/shared';
 
 import type { SourceDto } from './ports';
 
@@ -34,6 +41,20 @@ export function toSourceDto(row: SourceRow): SourceDto {
     authenticationRequired: row.authenticationRequired,
     createdAt: iso(row.createdAt),
     updatedAt: iso(row.updatedAt),
+  };
+}
+
+/** Audit row → API shape. Timestamps are ISO strings; metadata passes through. */
+export function toAuditLogDto(row: AuditLogRow): AuditLogEntry {
+  return {
+    id: row.id,
+    at: iso(row.at),
+    actorUserId: row.actorUserId,
+    actorEmail: row.actorEmail,
+    action: row.action as AuditLogEntry['action'],
+    targetType: row.targetType,
+    targetId: row.targetId,
+    metadata: row.metadata ?? {},
   };
 }
 

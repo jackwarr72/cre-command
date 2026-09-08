@@ -10,7 +10,50 @@
  *
  * The function is deliberately dependency-free so it can run in any JS runtime.
  */
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
+
+/** Encodes raw bytes as base32 (RFC 4648, uppercase, no padding). */
+export function base32Encode(bytes: Uint8Array): string {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
+  let bits = '';
+  for (const byte of bytes) bits += byte.toString(2).padStart(8, '0');
+  let out = '';
+  for (let i = 0; i < bits.length; i += 5) {
+    const chunk = bits.slice(i, i + 5);
+    out += alphabet[parseInt(chunk.padEnd(5, '0'), 2)];
+  }
+  return out;
+}
+
+/**
+ * Generates a new random TOTP shared secret as an uppercase base32 string.
+ * Defaults to 160 bits (20 bytes) — the RFC 6238 recommendation for SHA-1.
+ */
+export function generateTotpSecret(bytes = 20): string {
+  return base32Encode(randomBytes(bytes));
+}
+
+/**
+ * Builds a standard `otpauth://` provisioning URI for authenticator apps.
+ * `issuer` and `accountName` are percent-encoded; the secret is embedded as-is.
+ */
+export function otpauthTotpUrl(options: {
+  secret: string;
+  accountName: string;
+  issuer: string;
+}): string {
+  // The label is `issuer:account`, URI-encoded as a single path segment per
+  // the Google Authenticator Key URI format (the colon becomes %3A).
+  const label = encodeURIComponent(`${options.issuer}:${options.accountName}`);
+  const params = new URLSearchParams({
+    secret: options.secret,
+    issuer: options.issuer,
+    algorithm: 'SHA1',
+    digits: '6',
+    period: '30',
+  });
+  return `otpauth://totp/${label}?${params.toString()}`;
+}
 
 /** Decodes a base32-encoded string into raw bytes. RFC 4648, no padding required. */
 function base32Decode(input: string): Buffer {
@@ -44,8 +87,9 @@ export function totp(secretBase32: string, step: number): string {
   const secret = base32Decode(secretBase32);
   const counter = Buffer.alloc(8);
   // step is seconds / 30, so up to ~10 bits for current era; high bytes are zero.
-  counter.writeUInt32BE(Math.floor(step / 0x100000000), 4);
-  counter.writeUInt32BE(step >>> 0, 0);
+  // 8-byte big-endian per RFC 4226: high word at offset 0, low word at offset 4.
+  counter.writeUInt32BE(Math.floor(step / 0x100000000), 0);
+  counter.writeUInt32BE(step >>> 0, 4);
   const hmac = createHmac('sha1', secret).update(counter).digest();
   const offset = hmac[hmac.length - 1] & 0x0f;
   const code =

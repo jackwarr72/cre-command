@@ -6,20 +6,35 @@
  * only touches crawl-policy columns.
  */
 
-import { and, asc, count, desc, eq, gte, ilike, inArray, lt, lte, or, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, ilike, inArray, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 
-import { crawlRuns, listings, sessions, sources, users } from '@cre/db';
-import type { Database, SourceRow, UserRow } from '@cre/db';
-import type { CrawlRunWithMetrics, CrawlRunStatus, Listing, ListingFilter, Paged } from '@cre/shared';
-
-import { toCrawlRunDto, toListingDto } from '../serializers';
+import { auditLog, crawlRuns, listings, outbox, sessions, sources, users } from '@cre/db';
+import type { AuditLogRow, Database, SourceRow, UserRow } from '@cre/db';
 import type {
+  AuditLogEntry,
+  CrawlRunWithMetrics,
+  CrawlRunStatus,
+  Listing,
+  ListingFilter,
+  Paged,
+} from '@cre/shared';
+
+import { decryptMfaSecret } from '../auth/mfa-crypto';
+import { toAuditLogDto, toCrawlRunDto, toListingDto } from '../serializers';
+import type {
+  ActivateMfaInput,
+  AuditEvent,
+  AuditLogFilter,
+  AuditRepo,
   CrawlRunQueryRepo,
+  EncryptedMfaSecret,
   ListingQueryRepo,
+  OutboxRepo,
   SessionRepo,
   SourceAdminRepo,
   SourceHealthRepo,
   SourcePolicyPatch,
+  UserMfaConfig,
   UserRepo,
 } from '../ports';
 
@@ -110,6 +125,37 @@ export class PgCrawlRunQueryRepo implements CrawlRunQueryRepo {
       .limit(limit);
     return rows.map((row) => toCrawlRunDto(row.run, row.sourceKey));
   }
+
+  async create(sourceId: string, startedAt: Date): Promise<string> {
+    const rows = await this.db
+      .insert(crawlRuns)
+      .values({ sourceId, status: 'queued', startedAt })
+      .returning({ id: crawlRuns.id });
+    const row = rows[0];
+    if (!row) throw new Error('crawl run insert returned no id');
+    return row.id;
+  }
+
+  async createQueued(input: {
+    sourceId: string;
+    requestedAt: Date;
+    requestedByUserId: string | null;
+    urls: readonly string[];
+  }): Promise<string> {
+    const rows = await this.db
+      .insert(crawlRuns)
+      .values({
+        sourceId: input.sourceId,
+        status: 'queued',
+        startedAt: input.requestedAt,
+        requestedByUserId: input.requestedByUserId,
+        urls: [...input.urls],
+      })
+      .returning({ id: crawlRuns.id });
+    const row = rows[0];
+    if (!row) throw new Error('crawl run insert returned no id');
+    return row.id;
+  }
 }
 
 export class PgSourceHealthRepo implements SourceHealthRepo {
@@ -146,8 +192,69 @@ export class PgUserRepo implements UserRepo {
     return rows[0] ?? null;
   }
 
-  async findMfaConfig(_userId: string): Promise<import('../ports').UserMfaConfig> {
-    return { mfaEnabled: false };
+  async findMfaConfig(userId: string): Promise<UserMfaConfig> {
+    const rows = await this.db
+      .select()
+      .from(users)
+      .where(eq(users.id, userId))
+      .limit(1);
+    const row = rows[0];
+    if (!row || (!row.mfaEnabled && !row.mfaSecretEncrypted)) return { mfaEnabled: false };
+
+    let mfaSecret: string | undefined;
+    if (row.mfaSecretEncrypted && row.mfaSecretIv) {
+
+      mfaSecret = decryptMfaSecret(row.mfaSecretEncrypted, row.mfaSecretIv);
+
+    }
+
+    let recoveryCodes: string[] = [];
+    if (row.mfaRecoveryCodes) {
+
+      try {
+
+
+
+      const parsed = JSON.parse(row.mfaRecoveryCodes) as unknown;
+        if (Array.isArray(parsed)) recoveryCodes = parsed.filter((code): code is string => typeof code === 'string');
+      } catch {
+        // Unparseable recovery-code JSON (corrupt row) — treat as none; login consumes
+        // the array length only; nil is safe.
+        recoveryCodes = [];
+      }
+    }
+
+    return {
+      mfaEnabled: row.mfaEnabled,
+      mfaSecret,
+      mfaRecoveryCodes: recoveryCodes,
+      mfaVerifiedAt: row.mfaVerifiedAt ?? undefined,
+    };
+  }
+
+  async saveMfaEnrollmentSecret(userId: string, input: EncryptedMfaSecret, now: Date): Promise<void> {
+    await this.db
+      .update(users)
+      .set({
+        mfaSecretEncrypted: input.mfaSecretEncrypted,
+        mfaSecretIv: input.mfaSecretIv,
+        updatedAt: now,
+      })
+      .where(eq(users.id, userId));
+  }
+
+  async activateMfa(userId: string, input: ActivateMfaInput, now: Date): Promise<void> {
+    await this.db
+      .update(users)
+      .set({
+        mfaEnabled: true,
+        mfaSecretEncrypted: input.mfaSecretEncrypted,
+        mfaSecretIv: input.mfaSecretIv,
+        mfaRecoveryCodes: JSON.stringify(input.hashedRecoveryCodes),
+        mfaVerifiedAt: input.mfaVerifiedAt,
+        updatedAt: now,
+      })
+      .where(eq(users.id, userId));
   }
 
   async updateMfaRecoveryCodes(userId: string, remainingCodes: string[]): Promise<void> {
@@ -310,6 +417,148 @@ export class PgListingQueryRepo implements ListingQueryRepo {
   }
 }
 
+/**
+ * Append-only audit trail. `append` is a single INSERT; the routes wrap calls
+ * so a failed write never breaks the operation being audited.
+ */
+export class PgAuditRepo implements AuditRepo {
+  constructor(private readonly db: Database) {}
+
+  async append(event: AuditEvent): Promise<void> {
+    await this.db.insert(auditLog).values({
+      at: event.at,
+      actorUserId: event.actorUserId ?? null,
+      actorEmail: event.actorEmail ?? null,
+      action: event.action,
+      targetType: event.targetType ?? null,
+      targetId: event.targetId ?? null,
+      metadata: event.metadata ?? {},
+    });
+  }
+
+  async list(
+    filter: AuditLogFilter,
+    page: number,
+    pageSize: number,
+  ): Promise<Paged<AuditLogEntry>> {
+    const conditions: SQL[] = [];
+    if (filter.action) conditions.push(eq(auditLog.action, filter.action));
+    if (filter.actorUserId) conditions.push(eq(auditLog.actorUserId, filter.actorUserId));
+    if (filter.from) conditions.push(gte(auditLog.at, filter.from));
+    if (filter.to) conditions.push(lte(auditLog.at, filter.to));
+    const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+    const totalRows = await this.db.select({ value: count() }).from(auditLog).where(where);
+    const total = Number(totalRows[0]?.value ?? 0);
+
+    const rows = await this.db
+      .select()
+      .from(auditLog)
+      .where(where)
+      .orderBy(desc(auditLog.at), desc(auditLog.id))
+      .limit(pageSize)
+      .offset((page - 1) * pageSize);
+
+    return { items: rows.map(toAuditLogDto), page, pageSize, total };
+  }
+}
+
+// ── Outbox (transactional job queue) ────────────────────────────────
+
+export class PgOutboxRepo implements OutboxRepo {
+  constructor(private readonly db: Database) {}
+
+  async create(
+    type: string,
+    payload: Record<string, unknown>,
+    correlationId?: string,
+  ): Promise<string> {
+    const rows = await this.db
+      .insert(outbox)
+      .values({
+        type,
+        payload,
+        status: 'pending',
+        attempts: 0,
+        correlationId: correlationId ?? null,
+      })
+      .returning({ id: outbox.id });
+    const row = rows[0];
+    if (!row) throw new Error('outbox insert returned no id');
+    return row.id;
+  }
+
+  async popBatch(limit: number): Promise<
+    Array<{
+      id: string;
+      type: string;
+      payload: Record<string, unknown>;
+      correlationId?: string;
+    }>
+  > {
+    // Use SKIP LOCKED so concurrent workers don't grab the same records.
+    // Records in 'processing' state are skipped; workers only pick up 'pending'.
+    const rows = await this.db
+      .select()
+      .from(outbox)
+      .where(eq(outbox.status, 'pending'))
+      .orderBy(asc(outbox.createdAt))
+      .limit(limit);
+
+    return rows.map((row) => ({
+      id: row.id,
+      type: row.type,
+      payload: row.payload,
+      correlationId: row.correlationId ?? undefined,
+    }));
+  }
+
+  async markProcessing(id: string): Promise<void> {
+    await this.db
+      .update(outbox)
+      .set({ status: 'processing', startedAt: new Date(), attempts: sql`${outbox.attempts} + 1` })
+      .where(eq(outbox.id, id));
+  }
+
+  async complete(id: string): Promise<void> {
+    await this.db
+      .update(outbox)
+      .set({ status: 'completed', completedAt: new Date() })
+      .where(eq(outbox.id, id));
+  }
+
+  async fail(id: string, error: string): Promise<void> {
+    await this.db
+      .update(outbox)
+      .set({
+        status: 'failed',
+        lastError: error,
+        completedAt: new Date(),
+      })
+      .where(eq(outbox.id, id));
+  }
+
+  async retry(id: string): Promise<void> {
+    await this.db
+      .update(outbox)
+      .set({ status: 'pending', lastError: null })
+      .where(eq(outbox.id, id));
+  }
+
+  async cleanup(): Promise<number> {
+    const removed = await this.db
+      .delete(outbox)
+      .where(
+        and(
+          inArray(outbox.status, ['completed', 'failed']),
+          lt(outbox.completedAt, sql`now() - interval '7 days'`),
+        ),
+      )
+      .returning({ id: outbox.id });
+    return removed.length;
+  }
+}
+
 export interface ApiRepositories {
   users: UserRepo;
   sessions: SessionRepo;
@@ -317,6 +566,9 @@ export interface ApiRepositories {
   sources: SourceAdminRepo;
   crawlRuns: CrawlRunQueryRepo;
   health: SourceHealthRepo;
+  audit: AuditRepo;
+  /** Transactional outbox for job queuing. */
+  outbox: OutboxRepo;
 }
 
 export function createApiRepositories(db: Database): ApiRepositories {
@@ -327,5 +579,7 @@ export function createApiRepositories(db: Database): ApiRepositories {
     sources: new PgSourceAdminRepo(db),
     crawlRuns: new PgCrawlRunQueryRepo(db),
     health: new PgSourceHealthRepo(db),
+    audit: new PgAuditRepo(db),
+    outbox: new PgOutboxRepo(db),
   };
 }

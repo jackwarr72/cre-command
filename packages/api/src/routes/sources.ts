@@ -38,6 +38,19 @@ export function registerSourceRoutes(app: FastifyInstance, deps: AppDeps): void 
       if (!updated) {
         throw ApiError.notFound('NOT_FOUND', `no source with key '${key}'`);
       }
+
+      await deps.audit
+        .append({
+          action: 'source.policy_updated',
+          at: now,
+          actorUserId: request.user!.id,
+          actorEmail: request.user!.email,
+          targetType: 'source',
+          targetId: updated.key,
+          metadata: { fields: Object.keys(patch) },
+        })
+        .catch((error: unknown) => request.log.error({ error }, 'audit append failed'));
+
       return toSourceDto(updated);
     },
   );
