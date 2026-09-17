@@ -9,7 +9,7 @@
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { crawlRuns, listingObservations, listings, sources } from '@cre/db';
 import type { CrawlRunRow, Database, ListingRow, SourceRow } from '@cre/db';
-import type { ListingCandidate } from '@cre/shared';
+import type { CrawlRunStatus, ListingCandidate } from '@cre/shared';
 import { fingerprintListing, materializedFromRow } from '../fingerprint';
 import type {
   CrawlRunAccounting,
@@ -157,6 +157,19 @@ export class PgCrawlRunRepository implements CrawlRunRepository {
     const row = rows[0];
     if (!row) throw new Error('crawl run insert returned no id');
     return row.id;
+  }
+
+  async findById(
+    runId: string,
+  ): Promise<{ id: string; status: CrawlRunStatus; urls: string[] } | null> {
+    const rows = await this.db
+      .select({ id: crawlRuns.id, status: crawlRuns.status, urls: crawlRuns.urls })
+      .from(crawlRuns)
+      .where(eq(crawlRuns.id, runId))
+      .limit(1);
+    const row = rows[0];
+    if (!row) return null;
+    return { id: row.id, status: row.status, urls: row.urls ?? [] };
   }
 
   async claimForExecution(

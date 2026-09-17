@@ -22,7 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import type { ListingCandidate } from '@cre/shared';
+import type { CrawlRunStatus, ListingCandidate } from '@cre/shared';
 import { vivanunciosAdapter } from '@cre/adapters';
 import { Crawler } from '../src/crawl';
 import { fingerprintListing, materializedFromCandidate } from '../src/fingerprint';
@@ -170,6 +170,12 @@ class FakeCrawlRunRepo implements CrawlRunRepository {
     const runId = `run-${++this.seq}`;
     this.created.push({ sourceId: input.sourceId, startedAt: input.requestedAt });
     return runId;
+  }
+
+  async findById(
+    _runId: string,
+  ): Promise<{ id: string; status: CrawlRunStatus; urls: string[] } | null> {
+    return null;
   }
 
   async claimForExecution(

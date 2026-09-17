@@ -15,6 +15,16 @@ exports/**
 .env.local
 .env.*.local
 
+# local secrets / scratch artifacts (never commit)
+TEST_ENCRYPTION_KEY.txt
+api-output.txt
+api-start-output.txt
+test-results.txt
+full-test-results.txt
+test-suite-results.txt
+packages/api/test-output.txt
+query
+
 # logs
 *.log
 npm-debug.log*

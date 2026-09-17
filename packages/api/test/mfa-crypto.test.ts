@@ -18,9 +18,14 @@ function setEncryptionKey(value: string | undefined): void {
   }
 }
 
-function mutateBase64(value: string): string {
+function mutateHex(value: string): string {
+  // The IV is hex-encoded (see encryptMfaSecret). Pick a replacement hex
+  // character guaranteed to differ from the current one, so the mutation
+  // always yields a genuinely different IV. (Replacing with 'A'/'B' is a
+  // no-op for hex 'a'/'b' — hex is case-insensitive — which made the
+  // "tampered IV" assertion flaky ~1/16 of the time.)
   const last = value[value.length - 1];
-  const replacement = last === 'A' ? 'B' : 'A';
+  const replacement = last === 'f' ? 'e' : 'f';
   return `${value.slice(0, -1)}${replacement}`;
 }
 
@@ -113,7 +118,7 @@ describe('mfa-crypto', () => {
       setEncryptionKey(VALID_KEY);
 
       const encrypted = encryptMfaSecret(SECRET);
-      const tamperedCiphertext = mutateBase64(encrypted.encrypted);
+      const tamperedCiphertext = mutateHex(encrypted.encrypted);
 
       expect(() =>
         decryptMfaSecret(tamperedCiphertext, encrypted.iv),
@@ -168,7 +173,7 @@ describe('mfa-crypto', () => {
       setEncryptionKey(VALID_KEY);
 
       const encrypted = encryptMfaSecret(SECRET);
-      const tamperedIv = mutateBase64(encrypted.iv);
+      const tamperedIv = mutateHex(encrypted.iv);
 
       expect(() =>
         decryptMfaSecret(encrypted.encrypted, tamperedIv),

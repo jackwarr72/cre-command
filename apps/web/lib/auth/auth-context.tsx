@@ -56,7 +56,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     (token || authBypassEnabled) ? ['/api/auth/me'] : null,
     () => authApi.getCurrentUser(),
     {
-      revalidateOnFocus: true,
+      revalidateOnFocus: false,
       dedupingInterval: 60_000,
     },
   );

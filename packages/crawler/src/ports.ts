@@ -119,6 +119,10 @@ export interface CrawlRunRepository {
     requestedByUserId: string | null;
     urls: readonly string[];
   }): Promise<string>;
+  /** Fetch a queued run's identity, status, and stored URLs. */
+  findById(
+    runId: string,
+  ): Promise<{ id: string; status: CrawlRunStatus; urls: string[] } | null>;
   /** Atomically claim a queued run for execution. */
   claimForExecution(
     runId: string,

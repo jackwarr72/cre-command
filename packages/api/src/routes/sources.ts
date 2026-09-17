@@ -18,7 +18,12 @@ const patchSchema = z
   .strict();
 
 export function registerSourceRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const guards = createAuthGuards(deps.sessions, deps.now);
+  const guards = createAuthGuards(
+    deps.sessions,
+    deps.now,
+    deps.authBypass ?? false,
+    deps.nodeEnv ?? 'development',
+  );
 
   app.get('/sources', { preHandler: guards.requireAuth }, async () => {
     const rows = await deps.sources.list();

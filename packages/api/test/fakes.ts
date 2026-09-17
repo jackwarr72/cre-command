@@ -24,6 +24,7 @@ import type {
   CrawlTrigger,
   ListingQueryRepo,
   MfaChallengeRepo,
+  OutboxRepo,
   SessionRepo,
   SourceAdminRepo,
   SourceHealthRepo,
@@ -176,6 +177,9 @@ export function makeCrawlRunRow(overrides: Partial<CrawlRunRow> = {}): CrawlRunR
     listingsAdded: 0,
     listingsUpdated: 0,
     errors: [],
+    urls: [],
+    requestedByUserId: null,
+    workerId: null,
     createdAt: FIXED_NOW,
     metrics: defaultCrawlRunMetrics({
       id: '',
@@ -187,10 +191,13 @@ export function makeCrawlRunRow(overrides: Partial<CrawlRunRow> = {}): CrawlRunR
     }),
     ...overrides,
   };
-  // Unless metrics were replaced wholesale, keep the derived counters in sync
+  // Unless overridden, re-derive the derived counters and metrics in sync
   // with the final row values (matches what the crawler persists).
   if (!overrides.metrics) {
     row.metrics = defaultCrawlRunMetrics(row);
+  }
+  if (!overrides.urls) {
+    row.urls = [];
   }
   return row;
 }
@@ -556,6 +563,34 @@ export class FakeCrawlRunQueryRepo implements CrawlRunQueryRepo {
       .map((entry) => toCrawlRunDto(entry.row, entry.sourceKey));
   }
 
+  async create(sourceId: string, startedAt: Date): Promise<string> {
+    const row: CrawlRunRow = {
+      id: nextId('run'),
+      sourceId,
+      status: 'running',
+      startedAt,
+      finishedAt: null,
+      listingsFound: 0,
+      listingsAdded: 0,
+      listingsUpdated: 0,
+      errors: [],
+      urls: [],
+      requestedByUserId: null,
+      workerId: null,
+      createdAt: startedAt,
+      metrics: defaultCrawlRunMetrics({
+        id: '',
+        status: 'running',
+        listingsFound: 0,
+        listingsAdded: 0,
+        listingsUpdated: 0,
+        errors: [],
+      }),
+    };
+    this.rows.push({ row, sourceKey: '' });
+    return row.id;
+  }
+
   async createQueued(input: {
     sourceId: string;
     requestedAt: Date;
@@ -567,8 +602,14 @@ export class FakeCrawlRunQueryRepo implements CrawlRunQueryRepo {
       sourceId: input.sourceId,
       status: 'queued',
       startedAt: input.requestedAt,
-      requestedByUserId: input.requestedByUserId,
+      finishedAt: null,
+      listingsFound: 0,
+      listingsAdded: 0,
+      listingsUpdated: 0,
+      errors: [],
       urls: [...input.urls],
+      requestedByUserId: input.requestedByUserId,
+      workerId: null,
       createdAt: input.requestedAt,
       metrics: defaultCrawlRunMetrics({
         id: '',
@@ -579,7 +620,7 @@ export class FakeCrawlRunQueryRepo implements CrawlRunQueryRepo {
         errors: [],
       }),
     };
-    this.rows.push({ row, sourceId: input.sourceId });
+    this.rows.push({ row, sourceKey: '' });
     return row.id;
   }
 }
@@ -645,6 +686,66 @@ export class FakeCrawlTrigger implements CrawlTrigger {
   }
 }
 
+export class FakeOutboxRepo implements OutboxRepo {
+  readonly records: Array<{
+    id: string;
+    type: string;
+    payload: Record<string, unknown>;
+    correlationId?: string;
+    status: 'pending' | 'processing' | 'completed' | 'failed';
+    error?: string;
+  }> = [];
+
+  async create(
+    type: string,
+    payload: Record<string, unknown>,
+    correlationId?: string,
+  ): Promise<string> {
+    const id = nextId('outbox');
+    this.records.push({ id, type, payload, correlationId, status: 'pending' });
+    return id;
+  }
+
+  async popBatch(
+    limit: number,
+  ): Promise<Array<{ id: string; type: string; payload: Record<string, unknown>; correlationId?: string }>> {
+    return this.records
+      .filter((r) => r.status === 'pending')
+      .slice(0, limit)
+      .map(({ id, type, payload, correlationId }) => ({ id, type, payload, correlationId }));
+  }
+
+  async markProcessing(id: string): Promise<void> {
+    const record = this.records.find((r) => r.id === id);
+    if (record) record.status = 'processing';
+  }
+
+  async complete(id: string): Promise<void> {
+    const record = this.records.find((r) => r.id === id);
+    if (record) record.status = 'completed';
+  }
+
+  async fail(id: string, error: string): Promise<void> {
+    const record = this.records.find((r) => r.id === id);
+    if (record) {
+      record.status = 'failed';
+      record.error = error;
+    }
+  }
+
+  async retry(id: string): Promise<void> {
+    const record = this.records.find((r) => r.id === id);
+    if (record) record.status = 'pending';
+  }
+
+  async cleanup(): Promise<number> {
+    const before = this.records.length;
+    const kept = this.records.filter((r) => r.status !== 'completed' && r.status !== 'failed');
+    this.records.splice(0, this.records.length, ...kept);
+    return before - kept.length;
+  }
+}
+
 // ── Harness + helpers ────────────────────────────────────────────
 
 export interface TestHarness {
@@ -658,6 +759,7 @@ export interface TestHarness {
   crawl: FakeCrawlTrigger;
   mfaChallenges: FakeMfaChallengeRepo;
   audit: FakeAuditRepo;
+  outbox: FakeOutboxRepo;
   app: FastifyInstance;
 }
 
@@ -689,6 +791,7 @@ export async function buildTestHarness(
   const crawl = new FakeCrawlTrigger();
   const mfaChallenges = new FakeMfaChallengeRepo();
   const audit = new FakeAuditRepo();
+  const outbox = new FakeOutboxRepo();
 
   const deps: AppDeps = {
     users,
@@ -700,6 +803,7 @@ export async function buildTestHarness(
     crawl,
     mfaChallenges,
     audit,
+    outbox,
     sessionTtlHours: 24,
     now: fixedNow,
     ...options.deps,
@@ -716,6 +820,7 @@ export async function buildTestHarness(
     crawl,
     mfaChallenges,
     audit,
+    outbox,
     app,
   };
 }

@@ -37,6 +37,7 @@ async function harnessWithRuns() {
   return {
     h,
     crawl: h.crawl,
+    sourceId: sources[0].id,
     operatorHeaders: { authorization: `Bearer ${operatorToken}` },
     viewerHeaders: { authorization: `Bearer ${viewerToken}` },
   };
@@ -124,8 +125,8 @@ describe('POST /api/crawl-runs', () => {
     expect(response.json().error.code).toBe('FORBIDDEN');
   });
 
-  it('lets an operator trigger a crawl and returns the outcome', async () => {
-    const { h, operatorHeaders, crawl } = await harnessWithRuns();
+  it('lets an operator trigger a crawl via the async outbox path', async () => {
+    const { h, operatorHeaders, crawl, sourceId } = await harnessWithRuns();
     const response = await h.app.inject({
       method: 'POST',
       url: '/api/crawl-runs',
@@ -134,17 +135,24 @@ describe('POST /api/crawl-runs', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(response.json()).toMatchObject({
-      runId: 'run-new',
-      status: 'completed',
-      listingsAdded: 1,
-    });
-    expect(crawl.calls).toHaveLength(1);
-    expect(crawl.calls[0].source.key).toBe('vivanuncios');
-    expect(crawl.calls[0].urls).toEqual(['https://example.test/page/1']);
+    const body = response.json();
+    expect(body.crawlRun.status).toBe('queued');
+    const runId = body.crawlRun.id;
+    expect(typeof runId).toBe('string');
+
+    // The queued run is persisted and the outbox record references it;
+    // nothing executes synchronously in this mode.
+    expect(crawl.calls).toHaveLength(0);
+    const queued = h.crawlRuns.rows.find((entry) => entry.row.status === 'queued');
+    expect(queued?.row.urls).toEqual(['https://example.test/page/1']);
+    expect(h.outbox.records).toHaveLength(1);
+    const [record] = h.outbox.records;
+    expect(record.type).toBe('crawl.run');
+    expect(record.payload.crawlRunId).toBe(runId);
+    expect(record.payload.sourceId).toBe(sourceId);
   });
 
-  it('falls back to the source-configured entryUrls when none are passed', async () => {
+  it('queues the source-configured entryUrls when none are passed', async () => {
     const { h, operatorHeaders, crawl } = await harnessWithRuns();
     const response = await h.app.inject({
       method: 'POST',
@@ -154,7 +162,10 @@ describe('POST /api/crawl-runs', () => {
     });
 
     expect(response.statusCode).toBe(200);
-    expect(crawl.calls[0].urls).toEqual(['https://example.test/entry']);
+    expect(response.json().crawlRun.status).toBe('queued');
+    expect(crawl.calls).toHaveLength(0);
+    const queued = h.crawlRuns.rows.find((entry) => entry.row.status === 'queued');
+    expect(queued?.row.urls).toEqual(['https://example.test/entry']);
   });
 
   it('404s for an unknown source', async () => {

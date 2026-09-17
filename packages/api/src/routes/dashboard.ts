@@ -40,7 +40,12 @@ export interface DashboardSummary {
 }
 
 export function registerDashboardRoute(app: FastifyInstance, deps: AppDeps): void {
-  const guards = createAuthGuards(deps.sessions, deps.now);
+  const guards = createAuthGuards(
+    deps.sessions,
+    deps.now,
+    deps.authBypass ?? false,
+    deps.nodeEnv ?? 'development',
+  );
 
   app.get('/dashboard', { preHandler: guards.requireAuth }, async () => {
     const nowFn = deps.now ?? (() => new Date());

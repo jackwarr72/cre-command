@@ -1,0 +1,40 @@
+# syntax=docker/dockerfile:1
+# ── cre-command server image (API · worker · migrations) ─────────────────────
+# The TypeScript services run from source via tsx (root devDependency), so the
+# image needs no compile stage: install the workspace dependency tree, copy the
+# monorepo src trees, and pick the entrypoint per service in docker-compose.yml
+# (packages/api/src/index.ts · packages/workers/src/index.ts ·
+#  packages/db/src/postgres/migrate.ts).
+FROM node:22-alpine AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY packages/shared/package.json packages/shared/
+COPY packages/db/package.json packages/db/
+COPY packages/adapters/package.json packages/adapters/
+COPY packages/crawler/package.json packages/crawler/
+COPY packages/api/package.json packages/api/
+COPY packages/workers/package.json packages/workers/
+COPY apps/web/package.json apps/web/
+# tsx (dev) is required at runtime — dev deps are included deliberately.
+RUN npm ci --include=dev
+
+FROM deps AS build
+COPY . .
+
+FROM node:22-alpine AS runner
+ENV NODE_ENV=production \
+    PORT=4000 \
+    HOST=0.0.0.0
+WORKDIR /app
+# node_modules/@cre/* are relative symlinks into packages/* — copying both
+# keeps the workspace resolution intact.
+COPY --from=build --chown=node:node /app/node_modules ./node_modules
+COPY --from=build --chown=node:node /app/package.json ./package.json
+COPY --from=build --chown=node:node /app/packages ./packages
+COPY --from=build --chown=node:node /app/tsconfig*.json ./
+USER node
+EXPOSE 4000
+# Health: GET /health is deliberately unauthenticated (packages/api/src/routes/health.ts).
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||4000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["npx", "tsx", "packages/api/src/index.ts"]

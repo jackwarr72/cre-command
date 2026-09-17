@@ -510,6 +510,7 @@ export const AUDIT_ACTIONS = [
   'auth.mfa.enabled',
   'auth.mfa.recovery_code_used',
   'source.policy_updated',
+  'crawl.queued',
   'crawl.triggered',
 ] as const;
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -553,6 +554,12 @@ export interface ApiErrorBody {
   error: {
     message: string;
     code?: string;
+    /**
+     * Stack trace for *unexpected* server errors (HTTP 500+). Populated only
+     * in development/test environments for local diagnostics — production
+     * responses never include it.
+     */
+    stack?: string;
   };
 }
 

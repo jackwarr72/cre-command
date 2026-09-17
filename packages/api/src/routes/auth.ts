@@ -2,6 +2,7 @@ import type { LoginRequest, LoginResponse } from '@cre/shared';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 
+import { developmentUser } from '../auth/dev-user';
 import { bearerTokenOf, createAuthGuards } from '../auth/hooks';
 import { verifyPassword } from '../auth/passwords';
 import { hashToken, newSessionToken } from '../auth/tokens';
@@ -19,15 +20,6 @@ import { DEFAULT_MFA_CHALLENGE_TTL_MS } from '../config';
 
 /** How the second factor (or none) satisfied the login. */
 type LoginMethod = 'password' | 'totp' | 'recovery_code' | 'bypass';
-
-/** Returns a fixed development user when AUTH_BYPASS is enabled. */
-function developmentUser() {
-  return {
-    id: 'development-user',
-    email: 'admin@cre.local',
-    role: 'admin' as const,
-  };
-}
 
 /**
  * Fire-and-record an audit event: a failed audit write must never break the
@@ -109,7 +101,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AppDeps): void {
           metadata: { method: 'bypass' },
         });
         const response: LoginResponse = {
-          user: toUserDto(devUser),
+          user: devUser,
           token,
           expiresAt: expiresAt.toISOString(),
         };

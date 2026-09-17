@@ -197,7 +197,7 @@ and placeholder-backed CRM/ops routes ready for Phase 4–5 buildout.
 
 - Unit/integration tests (Vitest) for crawler pipeline, adapters, API routes
   with in-memory fakes (`packages/api/test/fakes.ts`).
-- `npm run test:unit` — 254 tests, no services required.
+- `npm run test:unit` — 289 tests, no services required.
 - `npm run test:integration` — live PostgreSQL/Redis suites that self-apply
   migrations to disposable databases. Locally they skip unless
   `DATABASE_URL`/`REDIS_URL` are set; CI provisions both as service

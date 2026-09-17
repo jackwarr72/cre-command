@@ -25,7 +25,12 @@ const auditQuerySchema = z
  * who did what, including their own login history metadata).
  */
 export function registerAuditLogRoute(app: FastifyInstance, deps: AppDeps): void {
-  const guards = createAuthGuards(deps.sessions, deps.now);
+  const guards = createAuthGuards(
+    deps.sessions,
+    deps.now,
+    deps.authBypass ?? false,
+    deps.nodeEnv ?? 'development',
+  );
 
   app.get('/audit-log', { preHandler: guards.requireRole('operator', 'admin') }, async (request) => {
     const query = request.query as Record<string, unknown>;

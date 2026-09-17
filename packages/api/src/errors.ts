@@ -26,13 +26,26 @@ export function errorBody(message: string, code?: string): ApiErrorBody {
   return { error: { message, ...(code ? { code } : {}) } };
 }
 
+/** Node environment of the API process (mirrors `AppDeps['nodeEnv']`). */
+export type NodeEnv = 'development' | 'production' | 'test';
+
 /**
  * Maps every failure onto the shared `ApiErrorBody` shape:
  * `ApiError` → its status/code; `ZodError` → 400 validation summary;
  * other pre-500 errors (bad JSON, oversized payload) → their status;
- * anything else → opaque 500 (details only in the log).
+ * anything else → 500. The 500 response is opaque in production
+ * (`'Internal server error'`, details only in the log). In development/test
+ * it additionally carries the real `error.message` and `error.stack` so
+ * local debugging doesn't require reading server logs — never the raw
+ * Error object itself.
  */
-export function registerErrorHandler(app: FastifyInstance): void {
+export function registerErrorHandler(
+  app: FastifyInstance,
+  opts: { nodeEnv?: NodeEnv } = {},
+): void {
+  // Safe default: diagnostics only when the environment is explicitly dev/test.
+  const nodeEnv = opts.nodeEnv ?? 'production';
+  const isDiagnosticEnvironment = nodeEnv === 'development' || nodeEnv === 'test';
   app.setErrorHandler(
     (error: FastifyError | ApiError | ZodError, request: FastifyRequest, reply: FastifyReply) => {
       if (error instanceof ApiError) {
@@ -56,6 +69,15 @@ export function registerErrorHandler(app: FastifyInstance): void {
         return reply.status(status).send(errorBody(error.message, code));
       }
       request.log.error(error, 'unhandled request error');
+      if (isDiagnosticEnvironment) {
+        // Development/test: surface the real failure (message + stack) inside
+        // the shared envelope. Only these two fields are exposed — the raw
+        // Error object is never serialized to the client.
+        const body = errorBody(error.message, 'INTERNAL');
+        if (error.stack) body.error.stack = error.stack;
+        return reply.status(500).send(body);
+      }
+      // Production: opaque — details stay in the log only.
       return reply.status(500).send(errorBody('Internal server error', 'INTERNAL'));
     },
   );

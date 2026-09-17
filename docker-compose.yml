@@ -1,0 +1,113 @@
+# ── cre-command — full stack orchestration ───────────────────────────────────
+# Required variables (compose reads them from the environment or a project .env):
+#   POSTGRES_PASSWORD    — db superuser password (db + migrate + api + worker)
+#   MFA_ENCRYPTION_KEY   — 32 random bytes, base64: openssl rand -base64 32
+# Optional:
+#   CORS_ORIGINS         — leave empty for same-origin only (Next proxies /api)
+#   LOG_LEVEL            — pino level, default info
+# Start:  docker compose up --build
+name: cre-command
+
+x-server-env: &server-env
+  NODE_ENV: production
+  DATABASE_URL: postgres://cre:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@db:5432/cre_command
+  REDIS_URL: redis://redis:6379
+  MFA_ENCRYPTION_KEY: ${MFA_ENCRYPTION_KEY:?set MFA_ENCRYPTION_KEY in .env (openssl rand -base64 32)}
+  LOG_LEVEL: ${LOG_LEVEL:-info}
+
+x-server-build: &server-build
+  context: .
+  dockerfile: Dockerfile.server
+
+x-api-healthcheck: &api-healthcheck
+  test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+  interval: 15s
+  timeout: 5s
+  start_period: 20s
+  retries: 5
+
+services:
+  db:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cre
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: cre_command
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cre -d cre_command"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # One-shot schema migration — the api/worker gate on its completion.
+  migrate:
+    build: *server-build
+    command: ["npx", "tsx", "packages/db/src/postgres/migrate.ts"]
+    environment: *server-env
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build: *server-build
+    command: ["npx", "tsx", "packages/api/src/index.ts"]
+    environment:
+      <<: *server-env
+      PORT: 4000
+      HOST: 0.0.0.0
+      # Empty = same-origin only — correct while Next proxies /api (see .env.example).
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+    ports:
+      - "4000:4000"
+    healthcheck: *api-healthcheck
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  worker:
+    build: *server-build
+    command: ["npx", "tsx", "packages/workers/src/index.ts"]
+    environment: *server-env
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        API_ORIGIN: http://api:4000
+    environment:
+      NODE_ENV: production
+      API_ORIGIN: http://api:4000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

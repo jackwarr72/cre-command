@@ -107,7 +107,7 @@ function zeroedMetrics(): CrawlRunMetrics {
 }
 
 export class Crawler {
-  constructor(private readonly options: CrawlerOptions) {}
+  constructor(public readonly options: CrawlerOptions) {}
 
   async crawl(request: CrawlRequest): Promise<CrawlOutcome> {
     const clock = this.options.clock ?? systemClock;

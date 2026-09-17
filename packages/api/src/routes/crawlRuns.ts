@@ -26,7 +26,12 @@ function entryUrlsFromConfig(config: Record<string, unknown>): string[] {
 }
 
 export function registerCrawlRunRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const guards = createAuthGuards(deps.sessions, deps.now);
+  const guards = createAuthGuards(
+    deps.sessions,
+    deps.now,
+    deps.authBypass ?? false,
+    deps.nodeEnv ?? 'development',
+  );
 
   app.get('/crawl-runs', { preHandler: guards.requireAuth }, async (request) => {
     const query = request.query as Record<string, unknown>;
@@ -100,7 +105,7 @@ export function registerCrawlRunRoutes(app: FastifyInstance, deps: AppDeps): voi
       }
 
       // ── Build the crawl payload for the job ────────────────────────
-      const now = deps.now ?? ((): Date => new Date)();
+      const now = deps.now ?? (() => new Date());
 
       // ── Use outbox pattern when available; fall back to sync crawl ──
       if (deps.outbox) {

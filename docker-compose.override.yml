@@ -1,0 +1,12 @@
+# Local development override — applied automatically by `docker compose up`.
+#
+# Publishes the database on the host so host-run dev servers (`npm run
+# dev:api`) and integration tests can reach it. The base docker-compose.yml
+# intentionally keeps the DB cluster-internal for the containerized topology;
+# this override exists for working against the same data from the host.
+#
+# Credentials: POSTGRES_PASSWORD from the project .env (see packages/api/.env).
+services:
+  db:
+    ports:
+      - "5432:5432"

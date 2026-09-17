@@ -6,7 +6,12 @@ import { evaluateHealth } from '../health/evaluate';
 import type { AppDeps } from '../ports';
 
 export function registerSourceHealthRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const guards = createAuthGuards(deps.sessions, deps.now);
+  const guards = createAuthGuards(
+    deps.sessions,
+    deps.now,
+    deps.authBypass ?? false,
+    deps.nodeEnv ?? 'development',
+  );
 
   app.get('/sources/:key/health', { preHandler: guards.requireAuth }, async (request) => {
     const { key } = request.params as { key: string };

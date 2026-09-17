@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-
+import { SWRConfig } from 'swr';
 import { AuthProvider } from '@/lib/auth/auth-context';
 import './globals.css';
 
@@ -9,18 +9,24 @@ export const metadata = {
     'Commercial Real Estate intelligence, crawling & lead-generation control panel',
 };
 
-/**
- * Root layout. Mounts the AuthProvider (client component) around every route
- * so that the entire app tree has access to auth state.
- *
- * Server-rendered metadata and font optimization are available here; the
- * auth lifecycle is client-only (localStorage token store).
- */
+export function Providers({ children }: { children: ReactNode }) {
+  return (
+    <SWRConfig
+      value={{
+        shouldRetryOnError: false,
+        revalidateOnFocus: false,
+      }}
+    >
+      <AuthProvider>{children}</AuthProvider>
+    </SWRConfig>
+  );
+}
+
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <body className="font-sans antialiased">
-        <AuthProvider>{children}</AuthProvider>
+        <Providers>{children}</Providers>
       </body>
     </html>
   );

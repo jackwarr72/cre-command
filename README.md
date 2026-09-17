@@ -33,18 +33,27 @@ npm install
 # Postgres (defaults to postgres://cre:secret@localhost:5432/cre_command)
 $env:DATABASE_URL = 'postgres://user:pass@localhost:5432/cre_command'
 
+# Create/refresh the schema before first use (idempotent; needs Postgres up)
+npm run db:migrate
+
 # Bootstrap admin (only when the users table is empty)
 $env:CRE_ADMIN_EMAIL = 'admin@example.com'
 $env:CRE_ADMIN_PASSWORD = 'change-me'
 
 npm run dev          # web (3000) + api (4000) together
-npm run typecheck    # all 7 projects, strict
+npm run typecheck    # 8 strict passes (6 packages + web + root)
 npm run test:unit    # vitest suites that need no services
 npm run test:integration
                      # live Postgres/Redis suites (skipped unless
                      # DATABASE_URL / REDIS_URL are set)
 npm run build:web    # production web build
 ```
+
+The API loads `packages/api/.env` at startup, but values already present in the
+shell/compose environment always win over the file. After changing
+`packages/db/src/postgres/schema.ts`, run `npm run db:generate` and commit the
+generated SQL in `packages/db/src/postgres/migrations` — `npm run db:migrate`
+applies only what `meta/_journal.json` lists.
 
 ## CI
 
@@ -60,7 +69,7 @@ Then open **http://localhost:3000** and sign in with the bootstrap credentials.
 ## Verification status
 
 - `npm run typecheck` — clean across `shared`, `db`, `adapters`, `crawler`, `api`, `workers`, `web`, plus the root project that covers `test-support/` and the vitest configs (8 strict passes, tests included).
-- `npm run test:unit` — **254 passed** (19 files, no services required).
+- `npm run test:unit` — **289 passed** (23 files: 20 package + 3 web, no services required).
 - `npm run test:integration` — live PostgreSQL/Redis suites; run via CI (service containers + fresh migrations) or locally with `DATABASE_URL` / `REDIS_URL` set. CI enforces them via `CRE_ENFORCE_INTEGRATION=1` so they can never silently skip.
 - `npm run build:web` — production build.
 

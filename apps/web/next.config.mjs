@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Self-contained server bundle for the web Docker image (apps/web/Dockerfile).
+  output: 'standalone',
   transpilePackages: ['@cre/shared', '@cre/db', '@cre/crawler', '@cre/adapters'],
   async rewrites() {
     // Single-origin UX: /api/* is proxied to the REST API.

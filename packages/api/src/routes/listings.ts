@@ -42,7 +42,12 @@ export function parseListingFilter(query: Record<string, unknown>): ListingFilte
 }
 
 export function registerListingRoutes(app: FastifyInstance, deps: AppDeps): void {
-  const guards = createAuthGuards(deps.sessions, deps.now);
+  const guards = createAuthGuards(
+    deps.sessions,
+    deps.now,
+    deps.authBypass ?? false,
+    deps.nodeEnv ?? 'development',
+  );
 
   app.get('/listings', { preHandler: guards.requireAuth }, async (request) => {
     const query = request.query as Record<string, unknown>;

@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import { Pool } from 'pg';
@@ -19,7 +21,10 @@ async function main(): Promise<void> {
   const db = drizzle(pool, { schema });
 
   console.log('Applying migrations …');
-  await migrate(db, { migrationsFolder: './src/postgres/migrations' });
+  // Module-relative (not cwd-relative): resolves correctly whether run from the
+  // workspace root, `packages/db`, or inside the container.
+  const migrationsFolder = fileURLToPath(new URL('./migrations', import.meta.url));
+  await migrate(db, { migrationsFolder });
   console.log('Migrations applied.');
 
   await pool.end();

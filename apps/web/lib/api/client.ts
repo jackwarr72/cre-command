@@ -73,7 +73,15 @@ export async function apiRequest<T>(
   const { method = 'GET', body, query } = options;
   const url = `/api${path}${buildQuery(query)}`;
 
-  const headers: HeadersInit = { 'Content-Type': 'application/json' };
+  // A JSON content-type is claimed only when a JSON body is actually sent.
+  // Declaring one with an empty payload is rejected by Fastify with 400
+  // (FST_ERR_CTP_EMPTY_JSON_BODY: "Body cannot be empty when content-type is
+  // set to 'application/json'"), which broke body-less requests such as
+  // POST /auth/logout. Header and body are derived from the same value so they
+  // can never disagree.
+  const payload = body === undefined ? undefined : JSON.stringify(body);
+  const headers: Record<string, string> =
+    payload === undefined ? {} : { 'Content-Type': 'application/json' };
   const token = getAuthToken();
   if (token) {
     headers.Authorization = `Bearer ${token}`;
@@ -82,7 +90,7 @@ export async function apiRequest<T>(
   const response = await fetch(url, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: payload,
   });
 
   if (!response.ok) {

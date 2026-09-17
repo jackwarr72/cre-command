@@ -345,4 +345,32 @@ describe('POST /api/auth/login MFA flow', () => {
     expect(body.token).toBeDefined();
     expect(h.sessions.rows).toHaveLength(1);
   });
+
+  it('returns development user via auth bypass when AUTH_BYPASS=true and NODE_ENV=development', async () => {
+    const h = await buildTestHarness({
+      deps: {
+        authBypass: true,
+        nodeEnv: 'development',
+      },
+    });
+    // The development user is auto-created by the test harness when auth bypass is enabled,
+    // or we can create it explicitly:
+    await createUser(h.users, { email: 'operator@cre.test', role: 'admin' });
+
+    const response = await h.app.inject({
+      method: 'GET',
+      url: '/api/auth/me',
+    });
+
+    expect(response.statusCode).toBe(200);
+    const body = response.json();
+    // /auth/me returns the user object directly (no { user } wrapper).
+    expect(body).toMatchObject({
+      id: 'usr-6',
+      email: 'operator@cre.test',
+      role: 'admin',
+    });
+    // Development user should not create a session token since it's a bypass
+    expect(h.sessions.rows).toHaveLength(0);
+  });
 });

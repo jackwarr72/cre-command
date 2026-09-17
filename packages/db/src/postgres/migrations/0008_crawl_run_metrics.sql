@@ -1,0 +1,12 @@
+-- Migration 0008: persisted crawl-run ingestion metrics.
+--
+-- `crawl_runs.metrics` is declared in schema.ts and was already present in the
+-- 0007 snapshot, but the 0007 SQL never created the column — so every query
+-- built from the schema (dashboard, run detail, source health) failed with
+-- `column crawl_runs.metrics does not exist` on a database migrated from the
+-- committed migrations alone.
+--
+-- Forward-only repair: environments that applied 0007 get the column now, and
+-- fresh databases end up identical. `IF NOT EXISTS` keeps the statement
+-- idempotent for environments that added the column by hand.
+ALTER TABLE "crawl_runs" ADD COLUMN IF NOT EXISTS "metrics" jsonb DEFAULT '{}'::jsonb NOT NULL;

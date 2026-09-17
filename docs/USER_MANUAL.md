@@ -172,7 +172,7 @@ npm start            # Start the API server
 |--------|-------------|
 | `npm run dev` | Start all services in dev mode |
 | `npm run typecheck` | TypeScript strict check across all packages (8 passes) |
-| `npm run test:unit` | Run 254 unit tests (no services required) |
+| `npm run test:unit` | Run 289 unit tests (no services required) |
 | `npm run test:integration` | Run integration tests with live Postgres/Redis |
 | `npm run build:web` | Production build of Next.js frontend |
 | `npm run build` | Build all packages |
@@ -476,7 +476,7 @@ Crawl job payload (stored in outbox):
 npm run test:unit
 ```
 
-**254 tests**, no services required. Uses in-memory fakes for repositories.
+**289 tests**, no services required. Uses in-memory fakes for repositories.
 
 ### 10.2 Integration tests
 

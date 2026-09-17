@@ -118,7 +118,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
         errorResponseBuilder: (_request, context) => rateLimitError(context.after),
   });
 
-  registerErrorHandler(app);
+  registerErrorHandler(app, { nodeEnv: deps.nodeEnv });
   registerSecurityHeaders(app);
   decorateRequestUser(app);
 

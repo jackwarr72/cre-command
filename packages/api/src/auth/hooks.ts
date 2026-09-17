@@ -4,24 +4,14 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { ApiError } from '../errors';
 import type { SessionRepo } from '../ports';
 import { toUserDto } from '../serializers';
+import { developmentUser } from './dev-user';
 import { hashToken } from './tokens';
 
 declare module 'fastify' {
   interface FastifyRequest {
     /** Set by the auth guards once the Bearer token is resolved. */
     user?: User | null;
-    /** Set when AUTH_BYPASS=true + NODE_ENV=development */
-    developmentUser?: User | null;
   }
-}
-
-/** Returns a fixed development user when AUTH_BYPASS is enabled. */
-function developmentUser(): User {
-  return {
-    id: 'usr-6',
-    email: 'operator@cre.test',
-    role: 'admin' as UserRole,
-  };
 }
 
 const BEARER_PREFIX = 'Bearer ';
@@ -62,7 +52,8 @@ export function createAuthGuards(
 ): AuthGuards {
   const clock = now ?? ((): Date => new Date());
   const isBypass = authBypass && nodeEnv === 'development';
-async function resolveUser(request: FastifyRequest): Promise<User | null> {
+
+  async function resolveUser(request: FastifyRequest): Promise<User | null> {
     if (isBypass) {
       const user = developmentUser();
       request.user = user;

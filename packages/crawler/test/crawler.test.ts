@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { AdapterError, SourceAdapter } from '@cre/adapters';
 import type { SourceRow } from '@cre/db';
-import type { ListingCandidate, RobotsPolicy } from '@cre/shared';
+import type { CrawlRunStatus, ListingCandidate, RobotsPolicy } from '@cre/shared';
 
 import { Crawler } from '../src/crawl';
 import { fingerprintListing, materializedFromCandidate } from '../src/fingerprint';
@@ -158,6 +158,11 @@ class FakeCrawlRuns implements CrawlRunRepository {
     const runId = `run-${++this.seq}`;
     this.created.push({ sourceId: input.sourceId, startedAt: input.requestedAt });
     return runId;
+  }
+  async findById(
+    _runId: string,
+  ): Promise<{ id: string; status: CrawlRunStatus; urls: string[] } | null> {
+    return null;
   }
   async claimForExecution(
     _runId: string,

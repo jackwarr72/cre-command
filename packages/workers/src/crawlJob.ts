@@ -1,7 +1,7 @@
 import type { AdapterRegistry } from '@cre/crawler';
 import type { Database } from '@cre/db';
 import type { OutboxRepo } from '@cre/api';
-import { Crawler } from '@cre/crawler';
+import { Crawler, FetchHttpClient, HttpRobotsChecker } from '@cre/crawler';
 import { createPostgresRepositories } from '@cre/crawler';
 
 export interface CrawlJobPayload {
@@ -30,15 +30,11 @@ export class CrawlJobHandler {
 
   /** Build a Crawler instance with postgres-backed repositories. */
   private buildCrawler(): Crawler {
+    const http = new FetchHttpClient({ userAgent: 'cre-crawler/1.0' });
     return new Crawler({
       repositories: createPostgresRepositories(this.db),
-      http: new (await import('@cre/crawler')).FetchHttpClient({
-        userAgent: 'cre-crawler/1.0',
-      }),
-      robots: new (await import('@cre/crawler')).HttpRobotsChecker({
-        httpClient: new (await import('@cre/crawler')).FetchHttpClient({
-          userAgent: 'cre-crawler/1.0',
-        }),
+      http,
+      robots: new HttpRobotsChecker(http),
     });
   }
 
@@ -77,7 +73,7 @@ export class CrawlJobHandler {
       throw new Error(`Crawl run ${crawlRunId} has no URLs configured`);
     }
 
-    const adapter = crawler.adapterRegistry.get(source.key);
+    const adapter = this.adapterRegistry.get(source.key);
     if (!adapter) {
       throw new Error(`No adapter registered for source ${source.key}`);
     }
@@ -99,7 +95,9 @@ export class CrawlJobHandler {
       if (claimResult.status === 'not_found') {
         throw new Error(`Crawl run ${crawlRunId} not found`);
       }
-      throw new Error(`Crawl run ${crawlRunId} claim failed: unknown status ${claimResult.status}`);
+      throw new Error(
+        `Crawl run ${crawlRunId} claim failed: no recognized status`,
+      );
     }
 
     // Execute the crawl
