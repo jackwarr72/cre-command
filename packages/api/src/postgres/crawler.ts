@@ -1,4 +1,4 @@
-import { vivanunciosAdapter, vivanunciosMetepecAdapter } from '@cre/adapters';
+import { vivanunciosAdapter, vivanunciosMetepecAdapter, inmuebles24Adapter } from '@cre/adapters';
 import {
   AdapterRegistry,
   Crawler,
@@ -20,6 +20,7 @@ export function createCrawlTrigger(db: Database): CrawlTrigger {
   const registry = new AdapterRegistry()
     .register(vivanunciosAdapter)
     .register(vivanunciosMetepecAdapter);
+  .register(inmuebles24Adapter);
   const http = new FetchHttpClient({ userAgent: DEFAULT_USER_AGENT });
   const crawler = new Crawler({
     repositories: createPostgresRepositories(db),

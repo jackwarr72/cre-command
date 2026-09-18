@@ -9,6 +9,7 @@
 
 export { vivanunciosAdapter } from './sources/vivanuncios/adapter';
 export { vivanunciosMetepecAdapter } from './sources/vivanuncios-metepec/adapter';
+export { inmuebles24Adapter } from './sources/inmuebles24/adapter';
 export type { AdapterError, SourceAdapter, SourceAdapterResult } from './types';
 export {
   canonicalizeUrl,

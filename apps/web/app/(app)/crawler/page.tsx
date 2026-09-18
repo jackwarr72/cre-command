@@ -34,7 +34,17 @@ export default function CrawlerPage() {
     setError(null);
     setSuccess(null);
     try {
-      const result = await triggerCrawl({ sourceKey: selectedSource });
+      // Construct URLs for known sources that don't have entryUrls configured
+      let urls: string[] | undefined;
+      if (selectedSource === 'vivanuncios_metepec') {
+        urls = constructVivanunciosMetepecSearchUrl(city, keywords, propertyType, listingType);
+      }
+      // Add more source-specific URL constructors here as needed
+
+      const result = await triggerCrawl({
+        sourceKey: selectedSource,
+        ...(urls !== undefined ? { urls } : {})
+      });
       setSuccess(`Crawl started — ${result.candidatesFound} candidates found so far.`);
       await mutateRuns();
     } catch (err) {
@@ -42,6 +52,69 @@ export default function CrawlerPage() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const constructVivanunciosMetepecSearchUrl = (
+    city: string,
+    keywords: string,
+    propertyType: string,
+    listingType: string
+  ): string[] => {
+    // Base URL for vivanuncios
+    const baseUrl = 'https://www.vivanuncios.com.mx';
+
+    // Reverse mapping from propertyType values to URL path segments
+    const propertyTypeMap: Record<string, string> = {
+      office: 'oficinas',
+      retail: 'local',
+      industrial: 'bodegas',
+      land: 'terrenos',
+      multifamily: 'departamentos',
+    };
+
+    // Spanish operation terms for URL path
+    const operationMap: Record<string, string> = {
+      sale: 'en-venta',
+      lease: 'en-renta',
+    };
+
+    // Get the path segments, fallback to defaults if not found
+    const propertySegment = propertyTypeMap[propertyType.toLowerCase()] || propertyType.toLowerCase();
+    const operationSegment = operationMap[listingType.toLowerCase()] || listingType.toLowerCase();
+
+    // Format city: lowercase, replace spaces with hyphens
+    const citySegment = city
+      .toLowerCase()
+      .trim()
+      .split(/\s+/)
+      .filter(Boolean)
+      .join('-') || '';
+
+    // Format keywords: lowercase, replace spaces with hyphens, comma-separated becomes hyphen-separated
+    const keywordSegment = keywords
+      .toLowerCase()
+      .trim()
+      .split(/[,\s]+/)
+      .filter(Boolean)
+      .join('-') || '';
+
+    // Construct the path: /s/[property]-[operation]/[city]/[keywords]/
+    // Based on observed patterns like: /s/oficinas-en-renta/metepec-toluca/
+    let path = `/s/${propertySegment}-${operationSegment}/`;
+
+    if (citySegment) {
+      path += `${citySegment}/`;
+    }
+
+    if (keywordSegment) {
+      path += `${keywordSegment}/`;
+    }
+
+    // Ensure we have a valid URL
+    const url = `${baseUrl}${path}`;
+
+    // Return as array (the API expects string[] for urls parameter)
+    return [url];
   };
 
   const recentRuns = runs?.items ?? [];

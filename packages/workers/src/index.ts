@@ -23,7 +23,7 @@ loadEnv({ path: new URL('../../api/.env', import.meta.url) }); // packages/api/.
 
 import pino from 'pino';
 
-import { vivanunciosAdapter, vivanunciosMetepecAdapter } from '@cre/adapters';
+import { vivanunciosAdapter, vivanunciosMetepecAdapter, inmuebles24Adapter } from '@cre/adapters';
 import { AdapterRegistry } from '@cre/crawler';
 import { createDatabase, createPool, type Database } from '@cre/db';
 
@@ -61,6 +61,7 @@ const db: Database = createDatabase(pool);
 const registry = new AdapterRegistry()
   .register(vivanunciosAdapter)
   .register(vivanunciosMetepecAdapter);
+  .register(inmuebles24Adapter);
 
 const worker = new CrawlWorker({
   db,
