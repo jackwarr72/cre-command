@@ -1,4 +1,4 @@
-import { vivanunciosAdapter } from '@cre/adapters';
+import { vivanunciosAdapter, vivanunciosMetepecAdapter } from '@cre/adapters';
 import {
   AdapterRegistry,
   Crawler,
@@ -17,7 +17,9 @@ import type { CrawlTrigger } from '../ports';
  * The crawler re-validates source policy and robots.txt at run time.
  */
 export function createCrawlTrigger(db: Database): CrawlTrigger {
-  const registry = new AdapterRegistry().register(vivanunciosAdapter);
+  const registry = new AdapterRegistry()
+    .register(vivanunciosAdapter)
+    .register(vivanunciosMetepecAdapter);
   const http = new FetchHttpClient({ userAgent: DEFAULT_USER_AGENT });
   const crawler = new Crawler({
     repositories: createPostgresRepositories(db),

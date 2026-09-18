@@ -1,5 +1,7 @@
 import type { JobQueue } from './queue';
 
+/** Dev/test fake queue used by unit tests (production uses PgOutboxJobQueue). */
+
 export interface InMemoryJob<TPayload = unknown> {
   id: string;
   payload: TPayload;
@@ -15,7 +17,14 @@ export class InMemoryJobQueue<TPayload> implements JobQueue<TPayload> {
   private readonly jobs = new Map<string, InMemoryJob<TPayload>>();
 
   push(payload: TPayload): string {
-    const id = crypto.randomUUID();
+    // When the payload already carries its record id (e.g. CrawlJobPayload.jobId
+    // mirroring the outbox row id), key the entry by it so complete/fail by that
+    // id resolve — mirroring PgOutboxJobQueue where the record id IS the job id.
+    const embedded =
+      typeof (payload as { jobId?: unknown })?.jobId === 'string'
+        ? ((payload as { jobId: string }).jobId.trim() ? (payload as { jobId: string }).jobId : null)
+        : null;
+    const id = embedded ?? crypto.randomUUID();
     this.jobs.set(id, {
       id,
       payload,

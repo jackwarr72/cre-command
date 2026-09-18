@@ -510,6 +510,7 @@ export const AUDIT_ACTIONS = [
   'auth.mfa.enabled',
   'auth.mfa.recovery_code_used',
   'source.policy_updated',
+  'source.created',
   'crawl.queued',
   'crawl.triggered',
 ] as const;

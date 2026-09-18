@@ -8,6 +8,7 @@
  */
 
 export { vivanunciosAdapter } from './sources/vivanuncios/adapter';
+export { vivanunciosMetepecAdapter } from './sources/vivanuncios-metepec/adapter';
 export type { AdapterError, SourceAdapter, SourceAdapterResult } from './types';
 export {
   canonicalizeUrl,

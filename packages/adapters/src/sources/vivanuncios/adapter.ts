@@ -156,3 +156,26 @@ export const vivanunciosAdapter: SourceAdapter = {
     return { candidates, errors };
   },
 };
+
+/**
+ * Creates a Vivanuncios adapter variant under a different source key.
+ *
+ * Vivanuncios area sources (e.g. `vivanuncios_metepec` for the Metepec/Toluca
+ * metro) share the exact same site, HTML vocabulary, and capture logic — only
+ * their source identity differs, so listings, crawl runs, and health are
+ * tracked per area while the parser stays single-sourced.
+ */
+export function createVivanunciosAdapter(sourceKey: string): SourceAdapter {
+  return {
+    sourceKey,
+    canHandle: (value: string) => vivanunciosAdapter.canHandle(value),
+    parse(html: string): SourceAdapterResult {
+      const result = vivanunciosAdapter.parse(html);
+      return {
+        // Re-stamp provenance so candidates carry the variant's identity.
+        candidates: result.candidates.map((candidate) => ({ ...candidate, sourceKey })),
+        errors: result.errors,
+      };
+    },
+  };
+}

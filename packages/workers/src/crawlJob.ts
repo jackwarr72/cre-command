@@ -1,74 +1,85 @@
-import type { AdapterRegistry } from '@cre/crawler';
+import type { AdapterRegistry, CrawlerRepositories } from '@cre/crawler';
 import type { Database } from '@cre/db';
-import type { OutboxRepo } from '@cre/api';
 import { Crawler, FetchHttpClient, HttpRobotsChecker } from '@cre/crawler';
 import { createPostgresRepositories } from '@cre/crawler';
 
 export interface CrawlJobPayload {
-  /** Outbox event id. */
+  /** Outbox record id (the queue adds it; the API payload itself omits it). */
   jobId: string;
   /** The crawl run to execute. */
   crawlRunId: string;
-  /** The source that triggered this run. */
+  /** The source that triggered this run (source row id). */
   sourceId: string;
   /** User who requested the crawl. */
-  requestedByUserId: string | null;
+  requestedByUserId?: string | null;
   /** ISO timestamp when the crawl was requested. */
-  requestedAt: string;
+  requestedAt?: string;
 }
 
 /**
- * Handles a single crawl job: claims the run, executes the crawler pipeline,
- * and publishes the result via the outbox.
+ * Handles a single crawl job: claims the run and executes the crawler pipeline
+ * (fetch → robots gate → adapter parse → dedup → persist → accounting).
+ * Outbox bookkeeping stays with the caller (`CrawlWorker` completes/fails the
+ * record by `job.jobId`), so the handler never touches the queue itself and
+ * stays focused on source → adapter → engine orchestration.
  */
 export class CrawlJobHandler {
   constructor(
     private readonly db: Database,
     private readonly adapterRegistry: AdapterRegistry,
-    private readonly outbox: OutboxRepo,
+    /** Test seam: inject a Crawler wired to fake repositories, or inject the
+     *  repositories directly (used for pre-execution lookups without an engine). */
+    private readonly injectedCrawler?: Crawler,
+    private readonly injectedRepositories?: CrawlerRepositories,
   ) {}
 
-  /** Build a Crawler instance with postgres-backed repositories. */
+  /** Repositories for source/run resolution. Tests inject fakes; production
+   *  uses the same postgres repositories the engine crawls with — so there is
+   *  still exactly one repository path, shared by lookup and execution. */
+  private resolveRepositories(): CrawlerRepositories {
+    if (this.injectedCrawler) return this.injectedCrawler.options.repositories;
+    if (this.injectedRepositories) return this.injectedRepositories;
+    return createPostgresRepositories(this.db);
+  }
+
+  /** Build a Crawler instance over the resolved repositories. */
   private buildCrawler(): Crawler {
+    if (this.injectedCrawler) return this.injectedCrawler;
     const http = new FetchHttpClient({ userAgent: 'cre-crawler/1.0' });
     return new Crawler({
-      repositories: createPostgresRepositories(this.db),
+      repositories: this.resolveRepositories(),
       http,
       robots: new HttpRobotsChecker(http),
     });
   }
 
   async handle(job: CrawlJobPayload): Promise<void> {
-    const { jobId, crawlRunId, sourceId, requestedByUserId, requestedAt } = job;
+    const { crawlRunId, sourceId } = job;
+    // Resolve against `resolveRepositories()` (shared lookup + engine stores)
+    // *before* building any network clients, so lookup failures throw with no
+    // HTTP/robots construction involved.
+    const repos = this.resolveRepositories();
 
-    const clock = { now: () => new Date() };
-
-    const crawler = this.buildCrawler();
-
-    const requestedAtDate = new Date(requestedAt);
-
-    // Look up the crawl run and source from DB via the crawler's repositories
-    const sourceRepo = crawler.options.repositories.sources;
-    const source = await sourceRepo.findByKey(sourceId);
-
+    // The outbox payload carries the source *id* (UUID); the registry and the
+    // crawler both key off `source.key`, so resolve the row by id first.
+    // Any throw propagates to CrawlWorker, which fails the outbox record by
+    // `job.jobId` (the single close/fail site) and continues with the batch.
+    const source = await repos.sources.findById(sourceId);
     if (!source) {
       throw new Error(`Source ${sourceId} not found`);
     }
 
-    // Look up the URLs from the crawl run
-    const runRepo = crawler.options.repositories.crawlRuns;
-    const run = await runRepo.findById(crawlRunId);
-
+    const run = await repos.crawlRuns.findById(crawlRunId);
     if (!run) {
       throw new Error(`Crawl run ${crawlRunId} not found`);
     }
 
     if (run.status !== 'queued') {
-      throw new Error(`Crawl run ${crawlRunId} is not in 'queued' status (current: ${run.status})`);
+      // Idempotency: a redelivered event for an already-claimed/finished run.
+      return;
     }
 
-    const urls = run.urls || [];
-
+    const urls = run.urls ?? [];
     if (urls.length === 0) {
       throw new Error(`Crawl run ${crawlRunId} has no URLs configured`);
     }
@@ -78,43 +89,19 @@ export class CrawlJobHandler {
       throw new Error(`No adapter registered for source ${source.key}`);
     }
 
-    // Claim the crawl run for execution (atomic)
-    const claimResult = await runRepo.claimForExecution(
+    // Atomically claim the run (queued → running). Losing the race means
+    // another worker owns it — treat as done for this event.
+    const claimResult = await repos.crawlRuns.claimForExecution(
       crawlRunId,
-      'worker-1',
-      requestedAtDate,
+      `worker-${process.pid}`,
+      new Date(),
     );
-
     if (claimResult.status !== 'claimed') {
-      if (claimResult.status === 'already_running') {
-        throw new Error(`Crawl run ${crawlRunId} already claimed by another worker`);
-      }
-      if (claimResult.status === 'already_terminal') {
-        throw new Error(`Crawl run ${crawlRunId} is in terminal state, cannot execute`);
-      }
-      if (claimResult.status === 'not_found') {
-        throw new Error(`Crawl run ${crawlRunId} not found`);
-      }
-      throw new Error(
-        `Crawl run ${crawlRunId} claim failed: no recognized status`,
-      );
+      return;
     }
 
-    // Execute the crawl
-    try {
-      const outcome = await crawler.executeExistingRun(
-        crawlRunId,
-        adapter,
-        urls,
-        clock as any,
-      );
-
-      // Publish completion via outbox
-      await this.outbox.complete(crawlRunId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await this.outbox.fail(crawlRunId, message);
-      throw error;
-    }
+    // queued → running → completed/failed is owned by the crawler engine,
+    // executed over the same repositories the lookup used.
+    await this.buildCrawler().executeExistingRun(crawlRunId, adapter, urls);
   }
 }

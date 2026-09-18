@@ -66,10 +66,23 @@ export default function SourcesPage() {
     try {
       if (editing) {
         await sourcesApi.updatePolicy(editing.key, { robotsPolicy: robotsPolicy as RobotsPolicy, rateLimitMs, maxWorkers });
+      } else {
+        await sourcesApi.create({
+          key: key.trim(),
+          name: name.trim(),
+          baseUrl: baseUrl.trim() || null,
+          schedule: schedule.trim(),
+          robotsPolicy: robotsPolicy as RobotsPolicy,
+          rateLimitMs,
+          maxWorkers,
+        });
       }
+      // Revalidate the SWR cache so the list reflects the change immediately.
       await mutate();
       resetForm();
     } catch (err) {
+      // Duplicate-key (409) and validation (400) errors land here: the form
+      // stays open with the message so the operator can fix and resubmit.
       setFormError(err instanceof ApiError ? err.message : 'An unexpected error occurred');
     } finally {
       setSubmitting(false);
@@ -113,13 +126,27 @@ export default function SourcesPage() {
             <div className="rounded-lg border border-accent-danger/30 bg-accent-danger/10 p-3 text-sm text-accent-danger">{formError}</div>
           )}
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <Input label="Key" value={key} onChange={(e) => setKey(e.target.value)} disabled={!!editing} placeholder="vivanuncios" required />
+            <Input
+              label="Key"
+              value={key}
+              onChange={(e) => setKey(e.target.value)}
+              disabled={!!editing}
+              placeholder="vivanuncios"
+              required
+              pattern="[a-z0-9][a-z0-9_\-]*"
+              title="Lowercase letters, digits, '-' or '_'; must start with a letter or digit"
+            />
             <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Vivanuncios" required />
-            <Input label="Base URL" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." />
-            <Input label="Schedule" value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="0 3 * * *" />
-            <Select label="Robots Policy" options={[{ value: 'strict', label: 'Strict' }, { value: 'honor', label: 'Honor' }, { value: 'allow', label: 'Allow' }]} onValueChange={setRobotsPolicy} />
-            <Input label="Rate Limit (ms)" type="number" value={rateLimitMs.toString()} onChange={(e) => setRateLimitMs(Number(e.target.value))} />
-            <Input label="Max Workers" type="number" value={maxWorkers.toString()} onChange={(e) => setMaxWorkers(Number(e.target.value))} />
+            <Input label="Base URL" type="url" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://..." />
+            <Input label="Schedule" value={schedule} onChange={(e) => setSchedule(e.target.value)} placeholder="0 3 * * *" required />
+            <Select
+              label="Robots Policy"
+              value={robotsPolicy}
+              options={[{ value: 'strict', label: 'Strict' }, { value: 'honor', label: 'Honor' }, { value: 'allow', label: 'Allow' }]}
+              onValueChange={setRobotsPolicy}
+            />
+            <Input label="Rate Limit (ms)" type="number" min={0} max={60000} value={rateLimitMs.toString()} onChange={(e) => setRateLimitMs(Number(e.target.value))} />
+            <Input label="Max Workers" type="number" min={1} max={64} value={maxWorkers.toString()} onChange={(e) => setMaxWorkers(Number(e.target.value))} />
           </div>
           <div className="flex gap-2">
             <Button type="submit" disabled={submitting}>{submitting ? 'Saving...' : 'Save'}</Button>

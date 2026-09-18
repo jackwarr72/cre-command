@@ -201,6 +201,9 @@ class FakeSourceRepo implements SourceRepository {
   async findByKey(_key: string): Promise<any> {
     return this.row;
   }
+  async findById(_id: string): Promise<any> {
+    return this.row;
+  }
 }
 
 const DUPLICATE_URL =

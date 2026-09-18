@@ -48,6 +48,17 @@ export interface SourcePolicyPatch {
   maxWorkers?: number;
 }
 
+/** Fields required to create a source (POST /sources). */
+export interface CreateSourceInput {
+  key: string;
+  name: string;
+  baseUrl: string | null;
+  schedule: string;
+  robotsPolicy: RobotsPolicy;
+  rateLimitMs: number;
+  maxWorkers: number;
+}
+
 export interface UserRepo {
   count(): Promise<number>;
   findByEmail(email: string): Promise<UserRow | null>;
@@ -144,6 +155,8 @@ export interface ListingQueryRepo {
 export interface SourceAdminRepo {
   list(): Promise<SourceRow[]>;
   findByKey(key: string): Promise<SourceRow | null>;
+  /** Creates a source with the given identity + crawl-policy fields. */
+  create(input: CreateSourceInput, now: Date): Promise<SourceRow>;
   updatePolicy(key: string, patch: SourcePolicyPatch, now: Date): Promise<SourceRow | null>;
 }
 

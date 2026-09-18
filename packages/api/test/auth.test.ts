@@ -366,7 +366,7 @@ describe('POST /api/auth/login MFA flow', () => {
     const body = response.json();
     // /auth/me returns the user object directly (no { user } wrapper).
     expect(body).toMatchObject({
-      id: 'usr-6',
+      id: '00000000-0000-4000-8000-000000000006',
       email: 'operator@cre.test',
       role: 'admin',
     });

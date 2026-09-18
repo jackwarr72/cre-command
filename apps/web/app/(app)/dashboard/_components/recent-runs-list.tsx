@@ -41,7 +41,7 @@ export function RecentRunsList({ runs }: RecentRunsListProps) {
           const m = run.metrics;
           const listingsFound = m?.listingsDiscovered ?? 0;
           const duration = m?.durationMs ?? null;
-          const errorCount = m?.errors.length ?? run.errors.length ?? 0;
+          const errorCount = m?.errors?.length ?? run.errors?.length ?? 0;
           return (
             <Link
               key={run.id}

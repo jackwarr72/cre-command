@@ -140,6 +140,8 @@ export interface CrawlRunRepository {
 
 export interface SourceRepository {
   findByKey(key: string): Promise<SourceRow | null>;
+  /** Fetch a source by its row id (workers resolve the payload's sourceId). */
+  findById(id: string): Promise<SourceRow | null>;
 }
 
 export interface CrawlerRepositories {

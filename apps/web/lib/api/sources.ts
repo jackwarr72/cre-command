@@ -1,8 +1,9 @@
 /**
  * Sources API endpoints.
  *
- * GET  /api/sources        → SourceDto[]  (all configured sources)
- * PATCH /api/sources/:key  → SourceDto    (update crawl policy)
+ * GET   /api/sources        → SourceDto[]  (all configured sources)
+ * POST  /api/sources        → SourceDto    (create a source)
+ * PATCH /api/sources/:key   → SourceDto    (update crawl policy)
  *
  * `SourceDto` mirrors `@cre/api`'s port but is defined locally here because
  * the web app only depends on `@cre/shared`, not `@cre/api`.
@@ -38,9 +39,23 @@ export interface SourcePolicyPatch {
   maxWorkers?: number;
 }
 
+/** Fields required to create a source (POST /api/sources). */
+export interface CreateSourceInput {
+  key: string;
+  name: string;
+  baseUrl: string | null;
+  schedule: string;
+  robotsPolicy: RobotsPolicy;
+  rateLimitMs: number;
+  maxWorkers: number;
+}
+
 export const sourcesApi = {
   list: (): Promise<SourceDto[]> =>
     apiRequest('/sources'),
+
+  create: (input: CreateSourceInput): Promise<SourceDto> =>
+    apiRequest('/sources', { method: 'POST', body: input }),
 
   updatePolicy: (
     key: string,

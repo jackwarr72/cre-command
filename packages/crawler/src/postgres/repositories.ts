@@ -28,6 +28,11 @@ export class PgSourceRepository implements SourceRepository {
     const rows = await this.db.select().from(sources).where(eq(sources.key, key)).limit(1);
     return rows[0] ?? null;
   }
+
+  async findById(id: string): Promise<SourceRow | null> {
+    const rows = await this.db.select().from(sources).where(eq(sources.id, id)).limit(1);
+    return rows[0] ?? null;
+  }
 }
 
 /** Candidate → materialized listing columns (shared by insert and update). */

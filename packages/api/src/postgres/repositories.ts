@@ -27,6 +27,7 @@ import type {
   AuditLogFilter,
   AuditRepo,
   CrawlRunQueryRepo,
+  CreateSourceInput,
   EncryptedMfaSecret,
   ListingQueryRepo,
   OutboxRepo,
@@ -48,6 +49,26 @@ export class PgSourceAdminRepo implements SourceAdminRepo {
   async findByKey(key: string): Promise<SourceRow | null> {
     const rows = await this.db.select().from(sources).where(eq(sources.key, key)).limit(1);
     return rows[0] ?? null;
+  }
+
+  async create(input: CreateSourceInput, now: Date): Promise<SourceRow> {
+    const rows = await this.db
+      .insert(sources)
+      .values({
+        key: input.key,
+        name: input.name,
+        baseUrl: input.baseUrl,
+        schedule: input.schedule,
+        robotsPolicy: input.robotsPolicy,
+        rateLimitMs: input.rateLimitMs,
+        maxWorkers: input.maxWorkers,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning();
+    const row = rows[0];
+    if (!row) throw new Error('source insert returned no row');
+    return row;
   }
 
   async updatePolicy(key: string, patch: SourcePolicyPatch, now: Date): Promise<SourceRow | null> {

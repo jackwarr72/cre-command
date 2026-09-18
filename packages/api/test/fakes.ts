@@ -22,6 +22,7 @@ import type {
   AuditRepo,
   CrawlRunQueryRepo,
   CrawlTrigger,
+  CreateSourceInput,
   ListingQueryRepo,
   MfaChallengeRepo,
   OutboxRepo,
@@ -503,6 +504,26 @@ export class FakeSourceAdminRepo implements SourceAdminRepo {
 
   async findByKey(key: string): Promise<SourceRow | null> {
     return this.rows.find((row) => row.key === key) ?? null;
+  }
+
+  async create(input: CreateSourceInput, now: Date): Promise<SourceRow> {
+    // Mirrors the `sources_key_uidx` unique index in Postgres.
+    if (this.rows.some((row) => row.key === input.key)) {
+      throw new Error(`duplicate source key '${input.key}'`);
+    }
+    const row = makeSourceRow({
+      key: input.key,
+      name: input.name,
+      baseUrl: input.baseUrl,
+      schedule: input.schedule,
+      robotsPolicy: input.robotsPolicy,
+      rateLimitMs: input.rateLimitMs,
+      maxWorkers: input.maxWorkers,
+      createdAt: now,
+      updatedAt: now,
+    });
+    this.rows.push(row);
+    return row;
   }
 
   async updatePolicy(key: string, patch: SourcePolicyPatch, now: Date): Promise<SourceRow | null> {

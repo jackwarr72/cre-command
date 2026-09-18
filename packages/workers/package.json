@@ -12,6 +12,7 @@
     "@cre/crawler": "0.1.0",
     "@cre/db": "0.1.0",
     "@cre/shared": "0.1.0",
+    "dotenv": "^17.4.2",
     "pino": "^9.5.0",
     "pino-pretty": "^11.3.0"
   },

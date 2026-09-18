@@ -75,6 +75,9 @@ class FakeSources implements SourceRepository {
   async findByKey(key: string): Promise<SourceRow | null> {
     return this.byKey.get(key) ?? null;
   }
+  async findById(_id: string): Promise<SourceRow | null> {
+    return null;
+  }
 }
 
 interface StoredListing {
